@@ -160,4 +160,15 @@ describe('Tournament action generator', () => {
 		const generated = generateLegalActions(request, { teamIDs });
 		assert(generated.slots.left.switches.length > 0);
 	});
+
+	it('keeps disabled moves in slot metadata but excludes them from legal actions', () => {
+		const request = moveRequest();
+		request.active[0].moves[0].disabled = true;
+		const generated = generateLegalActions(request, { teamIDs });
+		const disabled = generated.slots.left.moves.find(move => move.id === 'thunderbolt');
+		assert(disabled);
+		assert.equal(disabled.disabled, true);
+		assert.deepEqual(disabled.legal_targets, []);
+		assert(!generated.legal_actions.some(action => action.actions.left?.move === 'thunderbolt'));
+	});
 });

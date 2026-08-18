@@ -327,7 +327,12 @@ export interface SwitchAction {
     pokemon: OwnPokemonID;
 }
 
-export type PokemonAction = MoveAction | SwitchAction;
+export interface ReviveAction {
+    type: 'revive';
+    pokemon: OwnPokemonID;
+}
+
+export type PokemonAction = MoveAction | SwitchAction | ReviveAction;
 
 export interface TurnResponse {
     actions: Partial<Record<Position, PokemonAction>>;
@@ -356,11 +361,15 @@ export interface SlotRequest {
     required: boolean;
     moves: MoveOption[];
     switches: OwnPokemonID[];
+    revives: OwnPokemonID[];
     can_terastallize: boolean;
 }
 ```
 
 The participant API does not expose `pass`. If Showdown requires a pass for a fainted/non-acting slot, the adapter inserts it.
+
+Revival Blessing selection is exposed as the semantic `revive` action. The adapter translates it to Showdown's
+`switch N` choice syntax; participant bots never emit simulator choice syntax directly.
 
 ## 12. Complete legal actions
 

@@ -44,6 +44,7 @@ export function generateLegalActions(request: ChoiceRequest, context: ActionCont
 		const actions: PokemonAction[] = switches.map(pokemon => ({ type: 'switch', pokemon }));
 		actions.push(...revives.map(pokemon => ({ type: 'revive' as const, pokemon })));
 		for (const move of moves) {
+			if (move.disabled) continue;
 			const targets: (Target | undefined)[] = move.legal_targets.length ? move.legal_targets : [undefined];
 			for (const target of targets) {
 				actions.push(cleanMoveAction(move.id, target, false));
@@ -90,7 +91,7 @@ function buildMoveOptions(active: PokemonMoveRequestData, activeIndex: number, a
 			disabled: !!moveData.disabled,
 			legal_targets: moveData.disabled ? [] : semanticTargets(moveData.target || move.target, activeIndex, activeCount),
 		};
-	}).filter(move => !move.disabled);
+	});
 }
 
 function semanticTargets(target: string, activeIndex: number, activeCount: number): Target[] {

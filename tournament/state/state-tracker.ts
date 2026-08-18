@@ -28,6 +28,7 @@ export class StateTracker {
 
 	private readonly ownIDByIdent = new Map<string, OwnPokemonID>();
 	private readonly ownIDByName = new Map<string, OwnPokemonID>();
+	private readonly ownMaxHP = new Map<OwnPokemonID, number>();
 	private readonly ownObserved = new Map<string, { boosts: typeof EMPTY_BOOSTS, volatiles: Set<string> }>();
 	private readonly opponentCurrentItems = new Map<OpponentPokemonID, string | null>();
 	private opponentHasIllusion = false;
@@ -54,14 +55,19 @@ export class StateTracker {
 				this.ownIDByName.set(parsePokemonIdent(pokemon.ident)?.name || pokemon.ident, id);
 			});
 		}
+		request.side.pokemon.forEach((pokemon, index) => {
+			const maxHP = Number(/^\d+\/(\d+)/.exec(pokemon.condition)?.[1]);
+			if (maxHP > 0) this.ownMaxHP.set(this.ownIDForRequestPokemon(pokemon, index), maxHP);
+		});
 	}
 
 	teamIDsForRequest(request: ChoiceRequest): OwnPokemonID[] {
 		this.registerRequest(request);
-		return request.side.pokemon.map((pokemon, index) => (
-			this.ownIDByIdent.get(pokemon.ident) || this.ownIDByName.get(parsePokemonIdent(pokemon.ident)?.name || '') ||
-			ownPokemonID(index)
-		));
+		return request.side.pokemon.map((pokemon, index) => this.ownIDForRequestPokemon(pokemon, index));
+	}
+
+	ownMaxHPForID(id: OwnPokemonID) {
+		return this.ownMaxHP.get(id);
 	}
 
 	ownIDForIdent(ident: string) {
@@ -71,6 +77,11 @@ export class StateTracker {
 	ownObservationForIdent(ident: string) {
 		const name = parsePokemonIdent(ident)?.name || ident;
 		return this.ownObserved.get(name) || null;
+	}
+
+	private ownIDForRequestPokemon(pokemon: ChoiceRequest['side']['pokemon'][number], index: number) {
+		return this.ownIDByIdent.get(pokemon.ident) ||
+			this.ownIDByName.get(parsePokemonIdent(pokemon.ident)?.name || '') || ownPokemonID(index);
 	}
 
 	private apply(event: ProtocolEvent) {
@@ -364,10 +375,10 @@ export class StateTracker {
 	}
 }
 
-export function parseHealth(condition: string, exact: boolean): HealthState {
+export function parseHealth(condition: string, exact: boolean, knownMax?: number): HealthState {
 	const match = /^(\d+)(?:\/(\d+))?/.exec(condition);
 	const current = Number(match?.[1] || 0);
-	const max = Number(match?.[2] || (exact ? current || 1 : 100));
+	const max = Number(match?.[2] || knownMax || (exact ? current || 1 : 100));
 	return { current, max, exact, percent: max ? current / max * 100 : 0 };
 }
 

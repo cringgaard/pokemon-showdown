@@ -66,12 +66,13 @@ function ownPokemonState(
 	pokemon: ChoiceRequest['side']['pokemon'][number], id: OwnPokemonID, tracker: StateTracker
 ): OwnPokemonState {
 	const species = speciesFromDetails(pokemon.details);
-	const observed = tracker.ownObservationForIdent(pokemon.ident);
+	// Showdown clears boosts and volatiles on switch-out. Ignore any older observation for benched Pokemon.
+	const observed = pokemon.active ? tracker.ownObservationForIdent(pokemon.ident) : null;
 	return {
 		id,
 		species,
 		name: parsePokemonIdent(pokemon.ident)?.name || species,
-		health: parseHealth(pokemon.condition, true),
+		health: parseHealth(pokemon.condition, true, tracker.ownMaxHPForID(id)),
 		status: conditionStatus(pokemon.condition),
 		fainted: pokemon.condition.endsWith(' fnt'),
 		level: Number(/(?:^|, )L(\d+)/.exec(pokemon.details)?.[1] || 100),
