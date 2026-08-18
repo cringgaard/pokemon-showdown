@@ -36,6 +36,7 @@
         "./server/**/*.ts",
         "./server/**/*.tsx",
         "./sim/**/*",
+        "./tournament/**/*.ts",
         "./tools/set-import/*.ts",
         "./tools/modlog/*.ts",
         "./translations/**/*.ts",
