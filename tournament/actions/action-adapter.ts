@@ -20,7 +20,7 @@ export function adaptAction(response: BotResponse, request: ChoiceRequest, teamI
 function adaptPokemonAction(
 	action: PokemonAction, request: ChoiceRequest, teamIDs: OwnPokemonID[], activeIndex: number
 ) {
-	if (action.type === 'switch') {
+	if (action.type === 'switch' || action.type === 'revive') {
 		const slot = teamIDs.indexOf(action.pokemon) + 1;
 		if (!slot) throw new Error(`Unknown switch target ${action.pokemon}`);
 		return `switch ${slot}`;
@@ -36,8 +36,8 @@ function adaptPokemonAction(
 
 function targetLocation(target: Target, activeIndex: number) {
 	switch (target) {
-	case 'opponent_left': return 1;
-	case 'opponent_right': return 2;
+	case 'opponent_left': return 2;
+	case 'opponent_right': return 1;
 	case 'self': return -(activeIndex + 1);
 	case 'ally': return -((activeIndex ^ 1) + 1);
 	}

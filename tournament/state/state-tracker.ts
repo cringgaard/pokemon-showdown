@@ -7,7 +7,7 @@ import type {
 import { EMPTY_BOOSTS, type ObservedActivePokemon, type ObservedTeamPokemon } from './battle-state';
 import { parsePokemonIdent, parseProtocolLine, speciesFromDetails, type ProtocolEvent } from './protocol-parser';
 
-const SLOT_TO_POSITION: Record<string, Position> = { a: 'left', b: 'right' };
+const OPPONENT_SLOT_TO_POSITION: Record<string, Position> = { a: 'right', b: 'left' };
 
 export class StateTracker {
 	readonly sideID: SideID;
@@ -29,6 +29,7 @@ export class StateTracker {
 	private readonly ownIDByIdent = new Map<string, OwnPokemonID>();
 	private readonly ownIDByName = new Map<string, OwnPokemonID>();
 	private readonly ownObserved = new Map<string, { boosts: typeof EMPTY_BOOSTS, volatiles: Set<string> }>();
+	private readonly opponentCurrentItems = new Map<OpponentPokemonID, string | null>();
 	private opponentHasIllusion = false;
 
 	constructor(sideID: SideID) {
@@ -110,9 +111,7 @@ export class StateTracker {
 		case '-sidestart': this.applySideCondition(event, true); break;
 		case '-sideend': this.applySideCondition(event, false); break;
 		case '-swapsideconditions': this.swapSideConditions(); break;
-		case '-start':
-		case '-singleturn':
-		case '-singlemove': this.applyVolatile(event, true); break;
+		case '-start': this.applyVolatile(event, true); break;
 		case '-end': this.applyVolatile(event, false); break;
 		case '-item': this.applyReveal(event, 'item'); break;
 		case '-enditem': this.applyReveal(event, 'item', true); break;
@@ -139,17 +138,19 @@ export class StateTracker {
 			teraType: set.teraType || null,
 			moves: set.moves.map(id => ({ id: Dex.moves.get(id).id, name: Dex.moves.get(id).name })),
 		})));
+		this.opponentCurrentItems.clear();
+		for (const pokemon of this.opponentTeam) this.opponentCurrentItems.set(pokemon.id, pokemon.item);
 		this.opponentHasIllusion = this.opponentTeam.some(pokemon => pokemon.ability === 'illusion');
 	}
 
 	private applySwitch(event: ProtocolEvent) {
 		const ident = parsePokemonIdent(event.args[0] || '');
-		if (!ident?.slot || !SLOT_TO_POSITION[ident.slot]) return;
+		if (!ident?.slot || !OPPONENT_SLOT_TO_POSITION[ident.slot]) return;
 		if (ident.side === this.sideID) {
 			this.ownObserved.set(ident.name, { boosts: { ...EMPTY_BOOSTS }, volatiles: new Set() });
 			return;
 		}
-		const position = SLOT_TO_POSITION[ident.slot];
+		const position = OPPONENT_SLOT_TO_POSITION[ident.slot];
 		const apparentSpecies = speciesFromDetails(event.args[1] || ident.name);
 		const matched = this.opponentHasIllusion ? null : this.findOpponent(apparentSpecies, ident.name);
 		this.opponentActive[position] = {
@@ -161,7 +162,7 @@ export class StateTracker {
 			health: parseHealth(event.args[2] || '100/100', false),
 			status: statusFromCondition(event.args[2] || ''),
 			fainted: (event.args[2] || '').endsWith(' fnt'),
-			item: matched?.item || null,
+			item: matched ? this.currentOpponentItem(matched) : null,
 			ability: matched?.ability || null,
 			terastallized: false,
 			boosts: { ...EMPTY_BOOSTS },
@@ -175,15 +176,15 @@ export class StateTracker {
 		active.apparentSpecies = speciesFromDetails(event.args[1] || active.apparentSpecies);
 		const matched = this.findOpponent(active.apparentSpecies, active.name);
 		active.teamID = matched?.id || null;
-		active.item = matched?.item || active.item;
+		active.item = matched ? this.currentOpponentItem(matched) : active.item;
 		active.ability = matched?.ability || active.ability;
 	}
 
 	private applySwap(event: ProtocolEvent) {
 		const ident = parsePokemonIdent(event.args[0] || '');
 		if (!ident || ident.side === this.sideID || !ident.slot) return;
-		const from = SLOT_TO_POSITION[ident.slot];
-		const to = event.args[1] === '0' ? 'left' : event.args[1] === '1' ? 'right' : null;
+		const from = OPPONENT_SLOT_TO_POSITION[ident.slot];
+		const to = event.args[1] === '0' ? 'right' : event.args[1] === '1' ? 'left' : null;
 		if (!from || !to || from === to) return;
 		const first = this.opponentActive[from];
 		const second = this.opponentActive[to];
@@ -268,8 +269,8 @@ export class StateTracker {
 	}
 
 	private applyCopyBoost(event: ProtocolEvent) {
-		const target = this.observedFor(event.args[0]);
-		const source = this.observedFor(event.args[1]);
+		const source = this.observedFor(event.args[0]);
+		const target = this.observedFor(event.args[1]);
 		if (!target || !source) return;
 		const stats = event.args[2]?.split(',').map(stat => stat.trim()) || Object.keys(EMPTY_BOOSTS);
 		for (const stat of stats as (keyof typeof EMPTY_BOOSTS)[]) {
@@ -325,8 +326,7 @@ export class StateTracker {
 		const active = this.activeFor(event.args[0]);
 		if (!active) return;
 		active[property] = ended ? null : effectID(event.args[1]);
-		const team = active.teamID && this.opponentTeam.find(pokemon => pokemon.id === active.teamID);
-		if (team) team[property] = active[property];
+		if (property === 'item' && active.teamID) this.opponentCurrentItems.set(active.teamID, active.item);
 	}
 
 	private setCondition(conditions: Record<string, ObservedCondition>, id: string, active: boolean) {
@@ -338,7 +338,7 @@ export class StateTracker {
 	private activeFor(value: string | undefined) {
 		const ident = parsePokemonIdent(value || '');
 		if (!ident || ident.side === this.sideID || !ident.slot) return null;
-		return this.opponentActive[SLOT_TO_POSITION[ident.slot]] || null;
+		return this.opponentActive[OPPONENT_SLOT_TO_POSITION[ident.slot]] || null;
 	}
 
 	private observedFor(value: string | undefined) {
@@ -357,6 +357,10 @@ export class StateTracker {
 
 	private findOpponent(species: string, name: string) {
 		return this.opponentTeam.find(pokemon => pokemon.species === species || pokemon.name === name) || null;
+	}
+
+	private currentOpponentItem(pokemon: ObservedTeamPokemon) {
+		return this.opponentCurrentItems.has(pokemon.id) ? this.opponentCurrentItems.get(pokemon.id)! : pokemon.item;
 	}
 }
 

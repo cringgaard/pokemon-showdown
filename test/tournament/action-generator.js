@@ -59,7 +59,7 @@ describe('Tournament action generator', () => {
 		const request = moveRequest();
 		const generated = generateLegalActions(request, { teamIDs });
 		assert.equal(generated.kind, 'turn');
-		assert.deepEqual(generated.slots.left.moves[0].legal_targets, ['opponent_left', 'opponent_right']);
+		assert.deepEqual(generated.slots.left.moves[0].legal_targets, ['ally', 'opponent_left', 'opponent_right']);
 		assert.deepEqual(generated.slots.left.moves[1].legal_targets, []);
 		assert.deepEqual(generated.slots.right.moves[0].legal_targets, []);
 		assert(!generated.legal_actions.some(action => (
@@ -85,7 +85,9 @@ describe('Tournament action generator', () => {
 		assert.equal(generated.slots.left.switches.length, 0);
 		assert.equal(generated.slots.right.required, false);
 		const action = generated.legal_actions.find(candidate => candidate.actions.left?.target === 'opponent_right');
-		assert.equal(adaptAction(action, request, teamIDs), 'move 1 2, pass');
+		assert.equal(adaptAction(action, request, teamIDs), 'move 1 1, pass');
+		const leftTarget = generated.legal_actions.find(candidate => candidate.actions.left?.target === 'opponent_left');
+		assert.equal(adaptAction(leftTarget, request, teamIDs), 'move 1 2, pass');
 		assert.deepEqual(validateResponse(generated, JSON.parse(JSON.stringify(action))), action);
 		assert.equal(validateResponse(generated, { actions: { left: { type: 'move', move: 'splash' } } }), null);
 	});
@@ -103,6 +105,53 @@ describe('Tournament action generator', () => {
 			side: { name: 'Bot', id: 'p1', pokemon: sidePokemon() },
 		}, { teamIDs });
 		assert(two.legal_actions.every(action => action.actions.left.pokemon !== action.actions.right.pokemon));
+	});
+
+	it('distributes one viable forced switch across either fainted active slot', () => {
+		const pokemon = sidePokemon();
+		pokemon[0].condition = '0 fnt';
+		pokemon[1].condition = '0 fnt';
+		for (let i = 3; i < pokemon.length; i++) pokemon[i].condition = '0 fnt';
+		const request = {
+			forceSwitch: [true, true],
+			side: { name: 'Bot', id: 'p1', pokemon },
+		};
+		const generated = generateLegalActions(request, { teamIDs });
+		assert.deepEqual(generated.legal_actions, [
+			{ actions: { left: { type: 'switch', pokemon: 'team_2' } } },
+			{ actions: { right: { type: 'switch', pokemon: 'team_2' } } },
+		]);
+		assert.deepEqual(generated.legal_actions.map(action => adaptAction(action, request, teamIDs)), [
+			'switch 3, pass',
+			'pass, switch 3',
+		]);
+	});
+
+	it('represents Revival Blessing selection as a revive action over fainted Pokemon', () => {
+		const pokemon = sidePokemon();
+		pokemon[0].reviving = true;
+		pokemon[2].condition = '0 fnt';
+		const request = {
+			forceSwitch: [true, false],
+			side: { name: 'Bot', id: 'p1', pokemon },
+		};
+		const generated = generateLegalActions(request, { teamIDs });
+		assert.deepEqual(generated.slots.left.switches, []);
+		assert.deepEqual(generated.slots.left.revives, ['team_2']);
+		assert.deepEqual(generated.legal_actions, [
+			{ actions: { left: { type: 'revive', pokemon: 'team_2' } } },
+		]);
+		assert.equal(adaptAction(generated.legal_actions[0], request, teamIDs), 'switch 3, pass');
+	});
+
+	it('allows normal moves to target allies while keeping adjacentFoe foe-only', () => {
+		const request = moveRequest();
+		request.active[0].moves.push({
+			move: 'Fake Out', id: 'fakeout', pp: 10, maxpp: 10, target: 'adjacentFoe',
+		});
+		const generated = generateLegalActions(request, { teamIDs });
+		assert(generated.slots.left.moves.find(move => move.id === 'thunderbolt').legal_targets.includes('ally'));
+		assert(!generated.slots.left.moves.find(move => move.id === 'fakeout').legal_targets.includes('ally'));
 	});
 
 	it('keeps maybeTrapped switches provisionally legal', () => {

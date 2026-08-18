@@ -146,7 +146,12 @@ export interface SwitchAction {
 	pokemon: OwnPokemonID;
 }
 
-export type PokemonAction = MoveAction | SwitchAction;
+export interface ReviveAction {
+	type: 'revive';
+	pokemon: OwnPokemonID;
+}
+
+export type PokemonAction = MoveAction | SwitchAction | ReviveAction;
 
 export interface TurnResponse {
 	actions: Partial<Record<Position, PokemonAction>>;
@@ -162,6 +167,7 @@ export interface SlotRequest {
 	required: boolean;
 	moves: MoveOption[];
 	switches: OwnPokemonID[];
+	revives: OwnPokemonID[];
 	can_terastallize: boolean;
 }
 
