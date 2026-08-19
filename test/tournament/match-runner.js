@@ -40,6 +40,8 @@ describe('Tournament MatchRunner', function () {
 		const result = await runMatch();
 		assert.equal(result.format, DEFAULT_FORMAT);
 		assert(['Bot One', 'Bot Two'].includes(result.winner));
+		assert(['p1', 'p2'].includes(result.winner_side));
+		assert.equal(result.winner_participant_id, result.winner);
 		assert(result.turns > 0);
 		assert.equal(result.players.p1.stats.fallbacks, 0);
 		assert.equal(result.players.p2.stats.fallbacks, 0);
@@ -51,6 +53,15 @@ describe('Tournament MatchRunner', function () {
 		}
 		assert(Object.values(result.players).some(player =>
 			player.states.some(state => state.battle.phase === 'forced_switch')));
+	});
+
+	it('rejects duplicate participant IDs even when display names differ', async () => {
+		await assert.rejects(new MatchRunner({
+			format: DEFAULT_FORMAT,
+			seed: '1,2,3,4',
+			p1: { id: 'duplicate', name: 'Bot One', bot: randomBot, team },
+			p2: { id: 'duplicate', name: 'Bot Two', bot: randomBot, team },
+		}).run(), /Participant IDs must be unique/);
 	});
 
 	it('replays the same controlled battle outcome and authoritative log', async () => {

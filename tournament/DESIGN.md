@@ -1,111 +1,139 @@
 # Pokémon Showdown Bot Tournament — VGC Bot Harness Design
 
-Status: implementation specification for the first working vertical slice.
+Status: living implementation specification. Milestone 1 is complete; this document now defines the preserved v1 contracts and the roadmap/constraints for participant submissions, spectator presentation, sandboxing, and tournament orchestration.
 
-This document defines the architecture and public bot API for a headless Pokémon Showdown bot tournament. The tournament uses Pokémon Showdown as the authoritative battle simulator and exposes a stable Python interface to participant bots.
-
-The first milestone is intentionally narrow: two bundled Python reference bots must be able to play complete deterministic VGC-style Doubles matches through the same interface that participants will use.
+The tournament uses Pokémon Showdown as the authoritative battle simulator. Participant bots receive a stable semantic Python API built only from their player-visible information, while spectators may consume a separate one-way presentation stream.
 
 ## 1. Goals
 
 The tournament harness should:
 
-- use Pokémon Showdown as the only authority for battle mechanics, legality and RNG;
-- target Gen 9 VGC-style Doubles from the beginning;
+- use Pokémon Showdown as the only authority for battle mechanics, legality, and battle RNG;
+- target Gen 9 VGC-style Doubles;
 - support bring-6, pick-4 Team Preview with two leads;
 - expose a small Python API that does not require participants to understand Showdown protocol syntax;
 - expose only player-visible information to each bot;
 - run each bot as a persistent Python process for a match;
-- support arbitrary participant code and model files later via isolated execution;
-- detect malformed, illegal, hanging or repeatedly-invalid bots and continue the match using a deterministic random legal fallback;
-- record enough information for deterministic replay and debugging;
-- keep tournament code outside `sim/` and avoid modifying Showdown battle mechanics.
+- support participant code, models, and configuration files;
+- validate submissions and teams before a match begins;
+- eventually execute untrusted participant code in an isolated environment;
+- detect malformed, illegal, hanging, or repeatedly-invalid bots and continue using deterministic legal fallback;
+- record enough information for deterministic replay, debugging, audit, and spectator presentation;
+- provide a visual spectator experience suitable for showing live tournament matches on a shared screen;
+- keep the spectator system independent of battle execution so display failures cannot affect match correctness;
+- keep custom tournament code outside `sim/` and avoid modifying Showdown battle mechanics.
 
-## 2. Non-goals for Milestone 1
+## 2. Roadmap and scope
 
-Do not implement these yet unless required to complete the vertical slice:
+### Milestone 1 — core headless harness — COMPLETE
 
-- tournament brackets, standings or scheduling;
-- ZIP submission ingestion;
-- dependency installation from participant `requirements.txt`;
-- Docker/container sandboxing;
-- GPU support;
-- web UI or spectator frontend;
-- full replay presentation;
-- advanced damage calculation SDK;
-- every obscure simulator protocol message;
-- final production tournament regulation.
+Milestone 1 established:
 
-Milestone 1 should establish the architectural boundary cleanly so these can be added later.
+- real `BattleStream` matches;
+- player-specific streams via `getPlayerStreams`;
+- semantic bot state/actions;
+- complete public `legal_actions`;
+- stable team identities;
+- Open Team Sheet handling and hidden-information boundaries;
+- Team Preview, Doubles targeting, Tera, switching, forced switching, and Revival Blessing;
+- persistent Python JSONL workers;
+- retries, timeouts, unavailable-choice revisions, and deterministic fallback;
+- RandomBot and GreedyDamageBot;
+- deterministic/replay-oriented logging and end-to-end tests.
+
+### Milestone 2A — participant submission loading and user-facing CLI — NEXT
+
+Implement real participant directories and preflight validation. The immediate goal is that two ordinary submission folders can be validated and run without editing tournament source code.
+
+### Milestone 2B — spectator proof of concept
+
+Prove that a completed or live harness match can be rendered visually in a browser from the spectator stream/log. The frontend must remain read-only with respect to match execution.
+
+### Milestone 2C — isolated participant execution
+
+Move participant execution behind a sandbox/container boundary with explicit resource and network policy.
+
+### Milestone 3 — tournament orchestration and polished spectator presentation
+
+Add scheduling, standings/series handling, crash-resume behavior, aggregate results, and the cafeteria-screen tournament presentation layer.
 
 ## 3. Core architecture
 
 ```text
-Tournament / Match Runner
-        |
-        v
-    BattleStream
-        |
-  getPlayerStreams()
-   /           \
- p1             p2
- |               |
- v               v
-StateTracker   StateTracker
- |               |
- v               v
-StateBuilder   StateBuilder
- |               |
- v               v
-BotState JSON  BotState JSON
- |               |
- v               v
-PythonWorker   PythonWorker
- |               |
- v               v
-BotResponse    BotResponse
- |               |
- v               v
-ActionValidator / ActionAdapter
-        |
-        v
-  Showdown choice strings
-        |
-        v
-    BattleStream
+                              Tournament / Match Runner
+                                       |
+                                       v
+                                  BattleStream
+                                       |
+                              getPlayerStreams()
+                    _____________/     |      \_____________
+                   /                   |                    \
+                 p1                    p2             omniscient stream
+                  |                     |                    |
+                  v                     v                    v
+             StateTracker          StateTracker      Spectator Recorder /
+                  |                     |             Event Broadcaster
+                  v                     v                    |
+             StateBuilder          StateBuilder             +----> replay artifact
+                  |                     |                    |
+                  v                     v                    +----> live browser viewer
+            BotState JSON         BotState JSON
+                  |                     |
+                  v                     v
+             PythonWorker          PythonWorker
+                  |                     |
+                  v                     v
+             BotResponse           BotResponse
+                   \                   /
+                    v                 v
+                 ActionValidator / ActionAdapter
+                            |
+                            v
+                    Showdown choice strings
+                            |
+                            v
+                       BattleStream
 ```
 
-The omniscient stream must never be used to construct bot-visible state. It may be consumed only by match logging/result code.
+The information boundary is asymmetric by design:
+
+- **bots** receive only their player-specific stream plus their own current `ChoiceRequest` and public static metadata;
+- **spectators** may consume the omniscient/presentation stream according to tournament display policy;
+- spectator data must never be routed back into either bot's state or decision process.
+
+The spectator path is an output path only. A disconnected, crashed, or slow viewer must not block or alter battle execution.
 
 ## 4. Showdown integration
 
-Use the existing simulator APIs:
+Use existing simulator APIs including:
 
-- `BattleStream`
-- `getPlayerStreams`
-- `Teams`
-- `TeamValidator`
-- `Dex`
+- `BattleStream`;
+- `getPlayerStreams`;
+- `Teams`;
+- `TeamValidator`;
+- `Dex`.
 
-Do not directly expose `Battle`, `Side`, `Pokemon`, or other simulator objects to participant bots.
+Do not expose `Battle`, `Side`, `Pokemon`, or other simulator objects directly to participant bots.
 
 Use explicit battle seeds for reproducibility.
 
-The initial development format may use an existing Gen 9 VGC-compatible format, but tournament code must refer to a configurable format ID rather than hardcoding regulation-specific assumptions. A later custom format should use VGC-style Doubles rules and `Force Open Team Sheets` so no human OTS acceptance interaction is required.
+Tournament code must refer to a configurable format ID rather than hardcoding regulation-specific assumptions. The chosen VGC-style format should use forced Open Team Sheets so no human OTS acceptance interaction is required.
+
+Pokémon Showdown remains the final legality authority even though the public harness generates legal semantic actions in advance.
 
 ## 5. Participant submission contract
 
-The intended participant submission is eventually:
+The participant-facing directory shape is:
 
 ```text
-submission.zip
+submission/
 ├── main.py
 ├── team.txt
-├── requirements.txt        # optional
-└── arbitrary extra files   # models/config/etc.
+├── requirements.txt        # optional; installation deferred until isolated runtime work
+└── arbitrary extra files   # models/config/assets
 ```
 
-For Milestone 1, bundled reference bots may live directly inside the repository rather than ZIP archives.
+ZIP ingestion may be added around this directory contract later. Directory loading is sufficient for Milestone 2A.
 
 Participant code exposes exactly one required function:
 
@@ -114,61 +142,58 @@ def choose_action(state: dict) -> dict:
     ...
 ```
 
-`main.py` is imported once when the Python worker starts. Module-level initialization and model loading therefore occur once per worker lifetime.
+`main.py` is imported once when the Python worker starts. Module-level initialization/model loading therefore occurs once per worker lifetime.
 
-Participant bots may keep in-process state between decisions. They must not rely on it for correctness because a timed-out worker may be terminated and restarted.
+Participant bots may keep in-process state between decisions. They must not rely on that state for correctness because a timed-out worker may be terminated and restarted.
+
+### 5.1 Submission preflight
+
+Before starting a match, validation must fail fast with human-readable errors for at least:
+
+- missing `main.py`;
+- missing or unreadable `team.txt`;
+- team import failure;
+- wrong team size for the configured tournament contract;
+- `TeamValidator` rejection for the configured format;
+- malformed participant metadata if/when metadata is introduced.
+
+Use human-readable Pokémon Showdown team export in `team.txt`. Parse with `Teams.import`, pack with Showdown utilities where needed, and validate with `TeamValidator` before the team is sent to `BattleStream`.
+
+Do not silently repair an invalid participant team.
 
 ## 6. Public bot API overview
 
-Every invocation receives a JSON-serializable `BotState` with one of three phases:
+Every invocation receives a JSON-serializable `BotState` in one of three phases:
 
-- `team_preview`
-- `turn`
-- `forced_switch`
+- `team_preview`;
+- `turn`;
+- `forced_switch`.
 
 The same `choose_action(state)` function handles all phases.
 
-### 6.1 Stable own-team IDs
+### 6.1 Stable identities
 
-Every submitted Pokémon receives a stable ID before battle start:
+Own submitted Pokémon receive stable IDs before battle start:
 
 ```text
-team_0
-team_1
-team_2
-team_3
-team_4
-team_5
+team_0 ... team_5
 ```
 
-These IDs never change when Showdown reorders the selected four after Team Preview or when Pokémon switch positions.
+These IDs do not change when Showdown reorders the selected four or Pokémon change active positions.
 
-### 6.2 Opponent identities and Illusion
-
-Open Team Sheet entries should similarly receive IDs such as:
+Open Team Sheet entries receive stable IDs:
 
 ```text
 opponent_0 ... opponent_5
 ```
 
-However, active opponent identity must be allowed to be unknown when the player-visible protocol does not uniquely establish it, especially under Illusion.
+Opponent active identity may remain unknown when public information does not uniquely establish it, especially under Illusion. Never use simulator-hidden identity to resolve it.
 
-Never use hidden simulator state to map a disguised active Pokémon to its true team slot. An opponent active entry therefore has both:
+## 7. Public API types
 
-- `apparent_species`
-- `team_id: OpponentPokemonID | null`
+The versioned participant contract lives under `tournament/api/types.ts`.
 
-When `|replace|` or another public event resolves identity, the tracker may reconcile it.
-
-## 7. TypeScript public API types
-
-Create the public contract under something like:
-
-```text
-tournament/api/types.ts
-```
-
-The exact syntax may evolve during implementation, but the semantics below should remain stable.
+Core concepts include:
 
 ```ts
 export type BattlePhase = 'team_preview' | 'turn' | 'forced_switch';
@@ -183,23 +208,6 @@ export type Target =
 export type OwnPokemonID = `team_${number}`;
 export type OpponentPokemonID = `opponent_${number}`;
 
-export interface BotState {
-    schema_version: 1;
-    battle: BattleInfo;
-    runtime: RuntimeInfo;
-    self: OwnSideState;
-    opponent: OpponentSideState;
-    field: FieldState;
-    request: BotRequest;
-    history: BattleEvent[];
-}
-
-export interface BattleInfo {
-    format: string;
-    turn: number;
-    phase: BattlePhase;
-}
-
 export interface RuntimeInfo {
     decision_id: number;
     revision: number;
@@ -209,67 +217,13 @@ export interface RuntimeInfo {
 }
 ```
 
-`deadline_ms` means remaining wall-clock time for the current Showdown decision, not an absolute timestamp.
+`deadline_ms` is remaining wall-clock time for the current Showdown decision, not an absolute timestamp.
 
-## 8. Pokémon state
+Own state may expose exact values available from the player's request. Opponent precision must preserve Showdown censorship; never invent exact HP/stats that the player does not know.
 
-Own Pokémon may expose exact values available in the player's current request.
+Open Team Sheets expose only information public under the chosen format. Do not leak EVs, IVs, hidden exact stats, or other simulator-only information to bots.
 
-```ts
-export interface HealthState {
-    current: number;
-    max: number;
-    exact: boolean;
-    percent: number;
-}
-
-export interface Stats {
-    atk: number;
-    def: number;
-    spa: number;
-    spd: number;
-    spe: number;
-}
-
-export interface Boosts {
-    atk: number;
-    def: number;
-    spa: number;
-    spd: number;
-    spe: number;
-    accuracy: number;
-    evasion: number;
-}
-
-export interface KnownMove {
-    id: string;
-    name: string;
-}
-
-export interface OwnPokemonState {
-    id: OwnPokemonID;
-    species: string;
-    name: string;
-    health: HealthState;
-    status: string | null;
-    fainted: boolean;
-    level: number;
-    item: string | null;
-    ability: string;
-    tera_type: string;
-    terastallized: boolean;
-    stats: Stats;
-    boosts: Boosts;
-    moves: KnownMove[];
-    volatiles: string[];
-}
-```
-
-Do not invent precision for opponents. If Showdown reports opponent HP as a percentage/fraction rather than exact HP, preserve that censorship through `exact: false`.
-
-Open Team Sheets should expose only information publicly available under the chosen format. Do not expose EVs, IVs, hidden exact stats or other simulator-only information.
-
-## 9. Active positions
+## 8. Positions and targets
 
 From player 1's perspective Showdown Doubles positions are conceptually:
 
@@ -278,83 +232,17 @@ p2b p2a
 p1a p1b
 ```
 
-The public API should hide Showdown position syntax and expose semantic positions:
+The public API hides numeric Showdown target locations and exposes semantic positions/targets.
 
-- `left`
-- `right`
-- `opponent_left`
-- `opponent_right`
+For the opponent, protocol slot `b` is visually left and `a` is visually right from the observing player's perspective.
 
-Maintain an internal position-to-stable-ID mapping and update it on switch/drag/swap/etc.
+Semantic target translation must continue to match Showdown's target rules. In particular, `normal` may target the adjacent ally while `adjacentFoe` may not.
 
-## 10. Move options
+## 9. Move and slot options
 
-Current move choices should be enriched with static public Dex information.
+Current move choices are enriched with public static Dex metadata. Disabled moves remain visible in slot metadata with `disabled: true`, but are excluded from `legal_actions`.
 
-```ts
-export interface MoveOption {
-    id: string;
-    name: string;
-    type: string;
-    category: 'Physical' | 'Special' | 'Status';
-    base_power: number;
-    priority: number;
-    pp: number;
-    max_pp: number;
-    disabled: boolean;
-    legal_targets: Target[];
-}
-```
-
-`legal_targets` is semantic. Participant bots never need Showdown target locations such as `+1`, `+2`, `-1`, etc.
-
-Moves that do not require an explicit target should have an empty `legal_targets` array.
-
-## 11. Bot requests and responses
-
-### 11.1 Move/switch action
-
-```ts
-export interface MoveAction {
-    type: 'move';
-    move: string;
-    target?: Target;
-    terastallize?: boolean;
-}
-
-export interface SwitchAction {
-    type: 'switch';
-    pokemon: OwnPokemonID;
-}
-
-export interface ReviveAction {
-    type: 'revive';
-    pokemon: OwnPokemonID;
-}
-
-export type PokemonAction = MoveAction | SwitchAction | ReviveAction;
-
-export interface TurnResponse {
-    actions: Partial<Record<Position, PokemonAction>>;
-}
-```
-
-### 11.2 Team Preview
-
-```ts
-export interface TeamPreviewResponse {
-    team: [OwnPokemonID, OwnPokemonID, OwnPokemonID, OwnPokemonID];
-}
-```
-
-The order is meaningful:
-
-1. left lead
-2. right lead
-3. first back Pokémon
-4. second back Pokémon
-
-### 11.3 Slot request
+A slot request contains:
 
 ```ts
 export interface SlotRequest {
@@ -366,83 +254,42 @@ export interface SlotRequest {
 }
 ```
 
-The participant API does not expose `pass`. If Showdown requires a pass for a fainted/non-acting slot, the adapter inserts it.
+The participant API does not expose simulator `pass`. Required simulator passes are represented by omission of that slot's participant action.
 
-Revival Blessing selection is exposed as the semantic `revive` action. The adapter translates it to Showdown's
-`switch N` choice syntax; participant bots never emit simulator choice syntax directly.
-
-## 12. Complete legal actions
-
-Every request should contain the complete set of currently legal public responses:
+Revival Blessing uses a semantic action:
 
 ```ts
+export interface ReviveAction {
+    type: 'revive';
+    pokemon: OwnPokemonID;
+}
+```
+
+The adapter translates it to Showdown's required `switch N` choice syntax.
+
+## 10. Complete legal actions
+
+Every actionable request contains every complete currently legal public response in:
+
+```text
 request.legal_actions
 ```
 
-For Team Preview this contains all legal ordered bring-four selections.
-
-For turns and forced switches it contains all legal complete joint actions after applying cross-slot constraints.
-
-This list is the single source of truth for:
+This is the public source of truth for:
 
 - response validation;
-- `RandomBot`;
-- runtime fallbacks;
-- many unit tests;
-- simple participant strategies.
+- RandomBot;
+- deterministic fallback;
+- participant starter bots;
+- many harness tests.
 
-A minimal legal bot is therefore:
+Legal action generation must model cross-slot constraints, including duplicate switch targets, one Tera per turn, required/non-required slots, forced implicit passes, and reviving requests.
 
-```python
-import random
+Showdown remains the final authority and may still reject a provisionally legal response when hidden information becomes newly revealed.
 
-def choose_action(state):
-    return random.choice(state['request']['legal_actions'])
-```
+## 11. State tracking and hidden-information boundary
 
-### 12.1 Action generation
-
-Create an action generator, likely:
-
-```text
-tournament/actions/action-generator.ts
-```
-
-It should:
-
-1. derive legal per-slot move/switch options from the latest Showdown request;
-2. expand explicit move target choices;
-3. optionally expand Tera variants where allowed;
-4. create the Cartesian product for required slots;
-5. filter invalid cross-slot combinations.
-
-Cross-slot constraints include at minimum:
-
-- both slots cannot switch into the same bench Pokémon;
-- both slots cannot Terastallize in the same turn;
-- required slots must act;
-- inactive/non-required slots must not provide participant actions;
-- forced-switch requests may contain one or two required positions.
-
-Showdown remains the final legality authority.
-
-## 13. Action validation and translation
-
-Create a validator/adapter layer between Python and Showdown.
-
-Participant responses should first be structurally validated and canonicalized. The preferred validation model is equivalence to one entry in `request.legal_actions`.
-
-The adapter then translates semantic actions into Showdown choice strings, for example conceptually:
-
-```text
-move fakeout +1, move surgingstrikes +2 terastallize
-```
-
-Participants must never need to produce this syntax themselves.
-
-## 14. State tracking and information boundary
-
-Create roughly:
+The bot-state pipeline is roughly:
 
 ```text
 tournament/state/
@@ -452,489 +299,361 @@ tournament/state/
 └── state-builder.ts
 ```
 
-Responsibilities:
+`state-tracker.ts` maintains observations from that player's stream only. `state-builder.ts` combines those observations, the latest player request, and public static Dex metadata.
 
-### `protocol-parser.ts`
+The latest own request is authoritative for own-side exact state and current choices. Stable exact own max HP may be cached from previous own requests so a later public `0 fnt` condition does not fabricate max HP.
 
-Convert player-visible Showdown protocol lines into typed/internal events.
+Boosts/volatiles are battle-temporary. Benched own Pokémon must expose reset boosts/volatiles after switch-out.
 
-### `state-tracker.ts`
+Unknown player-visible protocol lines must not crash state tracking; retain them in raw/player history for future support.
 
-Maintain mutable observed state from only that player's stream.
+The omniscient stream must never be consulted to repair or enrich bot-visible state.
 
-### `state-builder.ts`
+## 12. Runtime protocol and supervision
 
-Combine:
+Use one persistent Python subprocess per bot per match. Node/Python communication uses JSON Lines over stdin/stdout; stdout is reserved for the worker protocol and participant output must be redirected/captured separately.
 
-- tracked observations;
-- latest player `ChoiceRequest`;
-- public static Dex metadata;
+Failures must never deadlock a match.
 
-into immutable `BotState` JSON.
-
-The player's latest `ChoiceRequest` should be authoritative for own-side exact state and current choices. Opponent state must be reconstructed only from public protocol/Open Team Sheet information.
-
-Never read hidden `Battle`/opponent simulator state to populate the bot state.
-
-## 15. Protocol events required for v1
-
-Do not attempt exhaustive protocol support immediately. Handle the events needed for useful VGC state and complete battle progression.
-
-At minimum:
-
-### Battle
-
-- `turn`
-- `start`
-- `win`
-- `tie`
-
-### Pokémon identity/position
-
-- `switch`
-- `drag`
-- `swap`
-- `replace`
-- `detailschange`
-- forme-change messages as needed
-
-### Actions/outcomes
-
-- `move`
-- `cant`
-- `faint`
-- `-damage`
-- `-heal`
-- `-sethp`
-- `-status`
-- `-curestatus`
-
-### Stat boosts
-
-- `-boost`
-- `-unboost`
-- `-setboost`
-- `-swapboost`
-- `-invertboost`
-- `-clearboost`
-- `-clearallboost`
-- related clear/copy events as practical
-
-### Field and side state
-
-- `-weather`
-- `-fieldstart`
-- `-fieldend`
-- `-sidestart`
-- `-sideend`
-- `-swapsideconditions`
-
-### Volatiles
-
-- `-start`
-- `-end`
-- `-singleturn`
-- `-singlemove`
-
-### Revealed information
-
-- `-item`
-- `-enditem`
-- `-ability`
-- `-endability`
-
-Unknown protocol lines should not crash the tracker. Preserve them in history/raw logs for debugging and future support.
-
-## 16. Field-condition duration philosophy
-
-The tracker should primarily represent observations, not reimplement Pokémon mechanics.
-
-For example, rather than embedding a second Tailwind simulator, it is acceptable for v1 state to retain information such as:
-
-```json
-{
-  "active": true,
-  "started_turn": 3
-}
-```
-
-A future SDK/derived-state layer can provide known mechanic durations. Do not duplicate Showdown battle logic unless necessary for the public interface.
-
-## 17. History
-
-For v1, a lightweight structured history is sufficient:
-
-```ts
-export interface BattleEvent {
-    turn: number;
-    type: string;
-    data: Record<string, unknown>;
-    raw: string;
-}
-```
-
-The bot should receive player-visible history only. Including the raw line is useful for advanced bots and debugging.
-
-## 18. Python worker protocol
-
-Use one persistent Python subprocess per bot per match.
-
-Node-to-Python communication should use JSON Lines over stdin/stdout.
-
-Example request:
-
-```json
-{"type":"decision","id":17,"revision":0,"state":{}}
-```
-
-Example response:
-
-```json
-{"type":"result","id":17,"revision":0,"response":{}}
-```
-
-Worker-side exceptions should be serialized as an error message rather than corrupting the protocol.
-
-Participant stdout must not corrupt JSONL. The worker wrapper should redirect participant stdout to stderr while invoking `choose_action`, or otherwise reserve stdout exclusively for the worker protocol.
-
-Capture stderr into match/bot logs.
-
-## 19. Runtime supervision
-
-Bot failures must never deadlock a match.
-
-Support two independent limits:
-
-- total wall-clock decision timeout;
-- maximum invalid responses for a request revision.
-
-Initial configuration may use values such as:
+Configuration includes at least:
 
 ```yaml
 decision_timeout_ms: 5000
 max_invalid_attempts: 3
 ```
 
-Keep these configurable.
+Each Showdown decision has a stable `decision_id`. `revision` increments when Showdown updates the current request because hidden information has become newly public. `attempt` increments for participant-invalid responses within the current revision.
 
-### 19.1 Decision identity
+The overall decision deadline does not reset on retries or request revisions.
 
-Each Showdown decision receives a `decision_id`.
+A Showdown `[Unavailable choice]` caused by newly revealed hidden information is not a participant fault. Rebuild the request, increment revision, reset attempt to 1, retain the original deadline, and invoke the bot again.
 
-A `revision` increments when Showdown legitimately updates the current request, especially after an `[Unavailable choice]` response reveals new information.
+On deadline expiry or exhausted invalid attempts, select a deterministic random member of the current `legal_actions`. Log every fallback and reason.
 
-An `attempt` increments when the participant returns a malformed/structurally invalid response for the current revision.
+A hung worker is terminated; fallback continues the current decision; the worker is restarted before that participant's next decision.
 
-### 19.2 Deadline semantics
+## 13. Match runner
 
-The wall-clock deadline belongs to the overall Showdown decision and does not reset on retries or request revisions.
+`tournament/match/` owns one battle and should:
 
-Example:
+- receive already-preflighted submissions/teams or invoke the shared preflight layer;
+- create `BattleStream` with explicit format and seed;
+- create p1/p2 player streams and the spectator/omniscient path;
+- start participant runtimes;
+- feed only each player's own stream to its tracker;
+- invoke bots on requests;
+- validate and adapt decisions;
+- handle unavailable choices, retries, timeout, and fallback;
+- continue through winner/end;
+- record audit/runtime artifacts;
+- publish spectator events without waiting for a viewer.
+
+The match runner must not access hidden simulator state to help bots.
+
+## 14. Required match artifacts
+
+A completed match should have a self-contained result directory. Exact filenames may evolve, but the conceptual contents are:
 
 ```text
-decision 17, revision 0, attempt 1
-  -> participant invalid response
-revision 0, attempt 2
-  -> participant returns provisionally legal switch
-  -> Showdown replies [Unavailable choice] due to hidden trapping info
-revision 1, attempt 1
-  -> only remaining wall-clock time is available
+match/
+├── result.json
+├── metadata.json
+├── battle.protocol.log
+├── p1-runtime.log
+├── p2-runtime.log
+└── bot-state-snapshots/     # configurable/debug-oriented
 ```
 
-### 19.3 Invalid vs unavailable choice
+`battle.protocol.log` is a first-class artifact. It should preserve the ordered spectator/rendering protocol needed to replay the match visually, not merely a human-readable summary.
 
-Treat these differently.
+`metadata.json`/`result.json` should include enough stable data for audit and later tournament aggregation, such as:
 
-Participant/harness-invalid examples:
+- participant identifiers/names;
+- format;
+- battle seed;
+- harness/Showdown version or commit where practical;
+- winner/result;
+- decision/fallback/timeout/invalid-response statistics;
+- artifact schema version.
 
-- malformed JSON/result;
-- unknown move ID;
-- illegal target;
-- duplicate switch-in;
-- double Tera;
-- response not matching a legal action.
+Artifacts used by the spectator must not become an input to participant decisions.
 
-These increment invalid attempts.
+## 15. Spectator architecture
 
-A Showdown `[Unavailable choice]` caused by newly revealed hidden information does not count as a participant error. Rebuild the request, increment `revision`, reset `attempt` to 1, preserve the original deadline, and invoke the bot again.
+The tournament will be watched on a shared cafeteria screen. Visual presentation is therefore a first-class product requirement.
 
-### 19.4 Fallback
+### 15.1 Source of spectator truth
 
-When either:
+The spectator system consumes the omniscient/presentation side of `BattleStream`, never either participant's `BotState`.
 
-- the decision deadline expires; or
-- maximum invalid attempts are exhausted;
+This has two purposes:
 
-select a random entry from `request.legal_actions` and submit it.
+1. preserve the strict bot information boundary;
+2. keep the renderer aligned with Showdown's actual authoritative battle events instead of reconstructing mechanics from normalized bot state.
 
-Do not use Showdown's `default` for tournament fallback because it deterministically chooses a first available option and creates bias.
+### 15.2 Live and replay use the same ordered event source
 
-Fallback randomness must itself be deterministic/replayable, derived from stable match data such as battle seed + player + decision ID + revision.
+Design one spectator event/log path that supports both:
 
-Log every fallback and its reason.
+- **live mode**: ordered battle protocol chunks/events are broadcast to a browser as the match runs;
+- **replay mode**: the same stored protocol artifact is fed into the same rendering layer later.
 
-### 19.5 Hung Python workers
+Live transport may be WebSocket or Server-Sent Events; choose the simplest implementation that preserves ordering and reconnect/replay practicality. The transport must not be coupled to simulator timing.
 
-If a Python invocation exceeds the decision deadline:
+### 15.3 Viewer independence
 
-1. terminate the worker process;
-2. record a timeout;
-3. choose deterministic random fallback;
-4. continue the battle;
-5. restart the participant worker before that bot's next decision.
+The browser is read-only. It must not send battle choices or otherwise participate in simulator execution.
 
-A future runtime config should distinguish startup timeout from per-decision timeout so model loading is not charged against move time.
+The battle must continue correctly if:
 
-## 20. Runtime statistics
+- no viewer is connected;
+- the browser reloads;
+- the network/display transport disconnects;
+- rendering is slow;
+- the spectator server crashes.
 
-Record per-bot metrics such as:
+The match runner may buffer/write spectator events, but it must not wait for rendering acknowledgements.
 
-```json
-{
-  "decisions": 17,
-  "timeouts": 1,
-  "invalid_responses": 2,
-  "fallbacks": 1,
-  "exceptions": 0
-}
+### 15.4 Rendering strategy
+
+Prefer reusing Pokémon Showdown's existing client battle rendering/protocol concepts where practical rather than implementing a second battle renderer or battle-state simulator.
+
+Custom tournament UI should wrap the battle presentation rather than replace mechanics rendering. Later presentation may include:
+
+- participant/bot names;
+- game/series score;
+- round/final label;
+- turn number;
+- team icons/Open Team Sheet presentation;
+- next-match/intermission screens;
+- winner screen;
+- standings/bracket context.
+
+The polished tournament shell is Milestone 3. Milestone 2B only needs to prove a real harness match can be watched visually from beginning to result.
+
+### 15.5 Spectator information policy
+
+Spectator visibility is separate from bot visibility. The tournament may intentionally show more information to spectators than either bot receives, including information available from the omniscient stream or tournament metadata.
+
+This policy must never alter bot inputs. Any later feature that displays bot explanations/debug output must also remain presentation-only and optional.
+
+## 16. Milestone 2A — submission loader and CLI
+
+### 16.1 Acceptance criteria
+
+Milestone 2A is complete when:
+
+1. A participant directory containing `main.py` and `team.txt` can be loaded without tournament-source edits.
+2. Team text is imported and validated through Showdown for the configured format before battle start.
+3. Invalid submissions fail with actionable human-readable messages.
+4. Two valid participant directories can play a complete match through the existing Milestone 1 runtime.
+5. A user-facing CLI supports at least validation and direct match execution.
+6. Match outputs are written to an explicit result directory using the artifact concepts above.
+7. Existing reference bots can be represented through the same submission abstraction or a clearly shared equivalent path.
+8. Existing Milestone 1 information-boundary/runtime guarantees remain intact.
+9. Tests cover valid and malformed submission fixtures plus end-to-end CLI/match behavior as practical.
+10. Full repository verification is run before declaring the milestone complete.
+
+### 16.2 CLI shape
+
+Exact command syntax may follow repository conventions, but the intended UX is approximately:
+
+```bash
+node dist/tournament/cli.js validate submissions/alice
+
+node dist/tournament/cli.js match \
+  submissions/alice \
+  submissions/bob \
+  --seed 1234 \
+  --output results/alice-vs-bob
 ```
 
-Fallback does not automatically mean forfeiture in v1.
+Do not add tournament scheduling or Docker execution to Milestone 2A.
 
-## 21. Reference bots
+## 17. Milestone 2B — spectator proof of concept
 
-Create two bundled reference bots.
+Milestone 2B is complete when:
 
-### 21.1 RandomBot
+1. RandomBot vs GreedyDamageBot (or two participant directories) can be started through the harness.
+2. A browser can visually follow the battle from Team Preview/start through the final result using spectator events, without participating in execution.
+3. The same completed match can be replayed from its stored `battle.protocol.log` or equivalent ordered spectator artifact.
+4. Disconnecting/reloading the viewer does not change battle execution or result.
+5. The implementation proves the chosen Showdown-rendering integration path before a polished tournament UI is built.
 
-Purpose:
+Do not build standings/brackets or a polished cafeteria shell in this milestone.
 
-- prove the minimal participant API;
-- provide deterministic fallback machinery;
-- test complete legal action generation.
+## 18. Milestone 2C — isolated execution
 
-Conceptual implementation:
+Before accepting untrusted coworker submissions, replace direct host execution with an isolation boundary.
+
+The target runtime should support:
+
+- one isolated environment per participant worker/match as appropriate;
+- explicit Python version;
+- controlled working directory containing the participant submission;
+- CPU and memory limits;
+- no network by default;
+- controlled writable filesystem locations;
+- process-tree termination on timeout;
+- optional dependency installation from `requirements.txt` under a controlled policy;
+- mounting/including participant model/config assets;
+- future GPU policy if explicitly enabled.
+
+Preserve the existing runtime-controller boundary so sandboxing does not require rewriting battle orchestration.
+
+## 19. Milestone 3 — tournament orchestration
+
+Once one isolated participant-vs-participant match is robust, add tournament-level scheduling.
+
+Initial competition orchestration should favor a deterministic round-robin structure with configurable repeated games per pairing rather than immediately optimizing for elimination brackets.
+
+Tournament configuration should eventually include concepts such as:
+
+```yaml
+format: <configured-vgc-format>
+games_per_pairing: 10
+decision_timeout_ms: 5000
+max_invalid_attempts: 3
+seed: 2026
+```
+
+Milestone 3 responsibilities include:
+
+- participant discovery and validation;
+- deterministic match/seed schedule;
+- repeated games or series;
+- standings and win/loss/tie aggregation;
+- runtime/fallback statistics;
+- resumability after process failure;
+- aggregate result export;
+- spectator transitions between upcoming match, live game, result, standings, and final winner screens.
+
+## 20. Reference bots and participant documentation
+
+Keep RandomBot and GreedyDamageBot as regression/reference participants.
+
+Before inviting coworkers, add a minimal tutorial submission demonstrating the intended participant experience, for example:
 
 ```python
-import random
-
 def choose_action(state):
-    return random.choice(state['request']['legal_actions'])
+    return state['request']['legal_actions'][0]
 ```
 
-For reproducible tests, prefer a tournament-provided seed/helper or otherwise ensure the bundled reference implementation can be deterministic.
+Participant documentation should explain:
 
-### 21.2 GreedyDamageBot
+- submission layout;
+- `choose_action(state)`;
+- `BotState` schema/versioning;
+- stable Pokémon IDs;
+- Team Preview ordering;
+- semantic targets;
+- `legal_actions`;
+- persistence/restarts;
+- timeouts and invalid responses;
+- hidden-information guarantees;
+- optional dependencies/assets policy.
 
-Purpose:
+## 21. Testing strategy
 
-- demonstrate how to inspect normalized state;
-- demonstrate legal-action scoring;
-- be stronger than random without becoming a complicated VGC AI.
+Preserve all Milestone 1 unit/integration coverage and add tests at each new boundary.
 
-Team Preview may initially choose randomly or with a simple heuristic.
+### Submission tests
 
-For battle turns, score legal joint actions approximately using public information such as:
+Cover:
 
-```text
-base power × STAB × type effectiveness × simple attack/stat heuristic
-```
+- valid directory;
+- missing `main.py`;
+- missing `team.txt`;
+- malformed team export;
+- invalid format/team;
+- wrong team size;
+- arbitrary extra assets do not break loading.
 
-Then select the highest-scoring entry from `legal_actions`.
+### Match artifact tests
 
-The bot should deliberately operate only through the public state and must not import/access Showdown simulator internals.
+Verify:
 
-## 22. Match runner
+- deterministic metadata/result fields;
+- spectator protocol artifact is ordered and non-empty;
+- participant runtime logs are separated;
+- no spectator/omniscient data is serialized into bot state.
 
-Create a headless match runner, likely under:
+### Spectator tests
 
-```text
-tournament/match/
-```
+At minimum:
 
-Responsibilities:
+- a real battle produces a renderable spectator event sequence;
+- stored sequence can be replayed;
+- viewer absence/disconnection cannot deadlock the battle.
 
-- validate supplied teams with `TeamValidator` before battle start;
-- create `BattleStream` with explicit format and seed;
-- create player streams via `getPlayerStreams`;
-- start two Python workers;
-- feed each player's stream into its tracker;
-- invoke bots only when that player receives a request;
-- validate/translate decisions;
-- handle retries, unavailable choices, timeout and fallback;
-- continue until `end`/winner;
-- collect logs and runtime statistics.
+### Runtime/sandbox tests
 
-The match runner should not access hidden simulator state to help bots.
+Retain timeout/exception/invalid/unavailable-choice tests and later add isolation/resource-policy tests.
 
-## 23. Team format
+## 22. Repository structure
 
-Use human-readable Pokémon Showdown team export for `team.txt`.
-
-Parse with `Teams.import` and validate with `TeamValidator` for the configured format.
-
-The simulator itself does not validate externally supplied teams, so validation is a harness responsibility before creating the match.
-
-## 24. Proposed repository structure
-
-A reasonable initial layout is:
+The current structure should remain modular. Expected additions may look like:
 
 ```text
 tournament/
 ├── DESIGN.md
+├── CODEX_HANDOFF.md          # temporary/session-oriented handoff; may be deleted later
 ├── api/
-│   └── types.ts
 ├── actions/
-│   ├── action-generator.ts
-│   ├── action-validator.ts
-│   └── action-adapter.ts
 ├── bots/
-│   ├── python-worker.ts
-│   └── worker.py
 ├── state/
-│   ├── battle-state.ts
-│   ├── protocol-parser.ts
-│   ├── state-tracker.ts
-│   └── state-builder.ts
 ├── match/
-│   └── match-runner.ts
+├── submissions/              # loader/validation code, not participant entries
+├── spectator/                # recorder/broadcaster/server integration
 ├── reference-bots/
-│   ├── random/
-│   │   └── main.py
-│   └── greedy-damage/
-│       └── main.py
 └── fixtures/
-    └── teams/
 
 test/tournament/
-├── protocol-parser.js
-├── action-generator.js
-├── runtime.js
-└── match-runner.js
+├── ...existing milestone-1 tests...
+├── submissions.js
+└── spectator.js              # when Milestone 2B begins
 ```
 
-Exact filenames can be adjusted if a cleaner repository-conforming structure becomes apparent during implementation.
+Exact filenames may change where repository conventions suggest a cleaner organization.
 
-## 25. Repository integration
+## 23. Implementation order for the next Codex sessions
 
-Current `tsconfig.json` does not include a top-level `tournament/` directory. Add:
+Do not implement all remaining milestones in one pass.
 
-```json
-"./tournament/**/*.ts"
-```
+### Next session: Milestone 2A
 
-to TypeScript compilation coverage.
+1. Re-read this document and inspect the merged Milestone 1 implementation/tests before changing architecture.
+2. Add a submission abstraction/loader for participant directories.
+3. Add team import + configured-format validation and actionable diagnostics.
+4. Route reference bots through the same submission abstraction where sensible without unnecessary churn.
+5. Extend the CLI with `validate` and participant-directory `match` flows.
+6. Define/write stable match result/artifact directories, including an ordered `battle.protocol.log` suitable for future rendering.
+7. Add focused tests and an end-to-end participant-directory match.
+8. Run the tournament-focused tests, TypeScript/lint checks, and full repository verification.
+9. Open a focused PR for review.
 
-Current Mocha configuration does not include `test/tournament/**/*.js`. Add it to the test spec.
+### Following session: Milestone 2B
 
-Follow existing repository lint/style conventions.
+Research the existing Pokémon Showdown client/rendering path first, then implement the smallest browser spectator POC that can consume the saved/live spectator stream. Do not invent a parallel mechanics renderer.
 
-## 26. Testing strategy
+### After spectator POC: Milestone 2C
 
-### 26.1 Protocol parser unit tests
+Introduce isolated execution behind the runtime abstraction.
 
-Cover at minimum:
-
-- switch/drag position mapping;
-- damage/heal/status;
-- boosts and clears;
-- weather;
-- Tailwind/side conditions;
-- Trick Room/terrain field conditions;
-- Tera/form changes;
-- Illusion `replace` reconciliation;
-- unknown protocol lines do not crash parsing/tracking.
-
-### 26.2 Action generator unit tests
-
-Cover at minimum:
-
-- normal two-slot move choices;
-- explicit target expansion;
-- spread/self moves with no explicit target;
-- move + switch combinations;
-- duplicate switch target filtering;
-- single Tera only;
-- fainted/non-required slot handling;
-- single forced switch;
-- double forced switch;
-- trapped/maybeTrapped behavior as represented by Showdown requests;
-- Team Preview bring-four ordering.
-
-### 26.3 Runtime controller tests
-
-Use fake Python bots/workers that:
-
-- return malformed results forever;
-- return the same illegal action forever;
-- raise exceptions;
-- hang forever;
-- fail twice then return a valid action;
-- receive an updated request after an unavailable choice.
-
-Verify the match cannot deadlock and fallback occurs deterministically.
-
-### 26.4 End-to-end tests
-
-At minimum:
-
-- RandomBot vs RandomBot completes a VGC-style battle with a fixed seed;
-- repeated run with the same seed produces the same authoritative battle outcome when all bot randomness is controlled;
-- GreedyDamageBot vs RandomBot completes;
-- neither bot receives hidden opponent values in its serialized state.
-
-## 27. Milestone 1 acceptance criteria
-
-Milestone 1 is complete when all of the following are true:
-
-1. A TypeScript test/CLI can launch one headless Gen 9 VGC-style Doubles match.
-2. Both sides use the real `getPlayerStreams` player-specific streams.
-3. Both sides are controlled by persistent Python subprocesses using JSONL.
-4. Both Python bots expose only `choose_action(state)`.
-5. Team Preview is performed through the public API using bring-6/pick-4 ordering.
-6. Normal Doubles turns support two simultaneous actions, move targets, switches and Tera.
-7. Forced switch requests can be completed.
-8. `request.legal_actions` is generated and used for validation.
-9. RandomBot can play complete battles using only `legal_actions`.
-10. GreedyDamageBot can play complete battles using only public state.
-11. A bot that hangs or repeatedly returns illegal actions cannot deadlock the match; deterministic random fallback continues play.
-12. Showdown `[Unavailable choice]` updates are retried without counting as participant invalid attempts.
-13. The state tracker uses only that bot's player-visible stream/request data.
-14. Exact battle seed, Showdown version/commit where practical, result and runtime fallback/error statistics are logged.
-15. Tournament tests are included in normal TypeScript/Mocha verification and pass.
-
-## 28. Implementation order for Codex
-
-Implement Milestone 1 incrementally. Do not try to build the full production tournament in one pass.
-
-Recommended sequence:
-
-1. Add repository integration (`tsconfig`, Mocha path) and skeleton tournament modules.
-2. Define public API types.
-3. Implement action generation/translation from real Showdown `ChoiceRequest` data; test it independently.
-4. Implement a minimal player-stream state tracker sufficient for Team Preview and basic turns.
-5. Implement Python JSONL worker and Node supervisor.
-6. Implement RandomBot.
-7. Implement a minimal `MatchRunner` and get RandomBot vs RandomBot completing end-to-end.
-8. Add timeout/invalid retry/fallback supervision and tests.
-9. Expand state tracking for the v1 strategic events listed above.
-10. Implement GreedyDamageBot.
-11. Add information-boundary and deterministic replay tests.
-12. Refactor only after the vertical slice works.
-
-After each meaningful step, run the narrow relevant tests plus TypeScript checking. Before declaring Milestone 1 complete, run the repository's appropriate full test/lint commands or clearly report any unrelated upstream failures.
-
-## 29. Design principles to preserve
+## 24. Design principles to preserve
 
 When implementation choices are ambiguous, prefer these principles:
 
 1. Pokémon Showdown is the authoritative mechanics/legality engine.
-2. Never leak information from omniscient/internal battle state to a bot.
-3. Participant API simplicity is more important than mirroring Showdown internals.
-4. Semantic structured actions are preferred over exposing Showdown command syntax.
-5. One stable `choose_action(state)` function handles all phases.
-6. `legal_actions` is the public source of truth for valid complete responses.
-7. Runtime failures must degrade to deterministic legal fallback rather than hang the tournament.
-8. Reproducibility and auditability matter from the first implementation.
-9. Keep custom tournament code modular and outside `sim/` whenever possible.
-10. Build the smallest working vertical slice before production hardening.
+2. Never leak omniscient/internal battle information to a bot.
+3. Spectator data is a one-way output and must never influence match execution.
+4. Participant API simplicity is more important than mirroring Showdown internals.
+5. Semantic structured actions are preferred over exposing Showdown command syntax.
+6. One stable `choose_action(state)` function handles all phases.
+7. `legal_actions` is the public source of truth for valid complete participant responses.
+8. Runtime failures degrade to deterministic legal fallback rather than hanging the tournament.
+9. Reproducibility and auditability matter from the beginning.
+10. A renderable ordered spectator protocol is a first-class match artifact.
+11. Prefer reuse of Showdown's established battle protocol/rendering concepts over duplicating mechanics for presentation.
+12. Keep tournament code modular and outside `sim/` whenever possible.
+13. Build and review small vertical slices: submissions, spectator POC, sandboxing, then orchestration/polish.

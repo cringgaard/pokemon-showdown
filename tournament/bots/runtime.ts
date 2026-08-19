@@ -45,9 +45,9 @@ export class BotController {
 	constructor(modulePath: string, options: BotControllerOptions) {
 		this.modulePath = modulePath;
 		this.options = {
+			...options,
 			decisionTimeoutMs: options.decisionTimeoutMs ?? 5000,
 			maxInvalidAttempts: options.maxInvalidAttempts ?? 3,
-			...options,
 		};
 		this.worker = this.createWorker();
 	}
