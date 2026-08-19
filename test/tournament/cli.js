@@ -45,6 +45,7 @@ describe('Tournament participant CLI', function () {
 
 		const completed = await execFileAsync(process.execPath, [
 			cli, 'match', p1, p2, '--seed', '1234', '--output', output,
+			'--runtime', 'host',
 			'--decision-timeout-ms', '1000', '--match-timeout-ms', '20000',
 		], { cwd: root, timeout: 30_000 });
 		const summary = JSON.parse(completed.stdout);
@@ -61,9 +62,11 @@ describe('Tournament participant CLI', function () {
 		for (const filename of expected) assert(fs.statSync(path.join(output, filename)).isFile(), filename);
 		const metadata = JSON.parse(fs.readFileSync(path.join(output, 'metadata.json'), 'utf8'));
 		const result = JSON.parse(fs.readFileSync(path.join(output, 'result.json'), 'utf8'));
-		assert.equal(metadata.schema_version, 1);
+		assert.equal(metadata.schema_version, 2);
 		assert.equal(metadata.participants.p1.id, 'alice-bot');
-		assert.equal(result.schema_version, 1);
+		assert.equal(metadata.runtime.participants.p1.kind, 'host');
+		assert.equal(metadata.runtime.participants.p1.trusted, true);
+		assert.equal(result.schema_version, 2);
 		assert.equal(result.winner_side, summary.winner_side);
 		assert.equal(result.winner_participant_id, summary.winner_participant_id);
 		assert.deepEqual(result.players.p1.stats, {
@@ -95,7 +98,7 @@ describe('Tournament participant CLI', function () {
 		const p2 = makeSubmission('submission', path.join(temporaryRoot, 'bob'));
 		const output = path.join(temporaryRoot, 'duplicate-result');
 		await assert.rejects(execFileAsync(process.execPath, [
-			cli, 'match', p1, p2, '--output', output,
+			cli, 'match', p1, p2, '--output', output, '--runtime', 'host',
 		], { cwd: root }), error => /Participant names must be unique/.test(error.stderr));
 		assert.equal(fs.existsSync(output), false);
 	});
@@ -114,13 +117,14 @@ describe('Tournament participant CLI', function () {
 		try {
 			const completed = await execFileAsync(process.execPath, [
 				cli, 'match', p1, p2, '--seed', '4321', '--output', output,
+				'--runtime', 'host',
 				'--spectator-port', String(address.port),
 				'--decision-timeout-ms', '1000', '--match-timeout-ms', '20000',
 			], { cwd: root, timeout: 30_000 });
 			const summary = JSON.parse(completed.stdout);
 			assert(summary.winner || summary.tie);
-			assert.match(completed.stderr, /Live spectator unavailable: .*EADDRINUSE/);
-			assert.match(completed.stderr, /Continuing match without live spectator/);
+			assert(/Live spectator unavailable: .*EADDRINUSE/.test(completed.stderr));
+			assert(/Continuing match without live spectator/.test(completed.stderr));
 			for (const filename of ['result.json', 'metadata.json', 'battle.protocol.log']) {
 				assert(fs.statSync(path.join(output, filename)).isFile(), filename);
 			}
@@ -129,5 +133,17 @@ describe('Tournament participant CLI', function () {
 				blocker.close(error => error ? reject(error) : resolve());
 			});
 		}
+	});
+
+	it('requires Docker by default and never silently falls back to host execution', async () => {
+		const p1 = makeSubmission('Docker Required One');
+		const p2 = makeSubmission('Docker Required Two');
+		const output = path.join(temporaryRoot, 'must-not-run-on-host');
+		await assert.rejects(execFileAsync(process.execPath, [
+			cli, 'match', p1, p2, '--output', output,
+		], { cwd: root, env: { ...process.env, PATH: '' } }), error => (
+			/Docker isolation is required/.test(error.stderr) && /--runtime host/.test(error.stderr)
+		));
+		assert.equal(fs.existsSync(output), false);
 	});
 });

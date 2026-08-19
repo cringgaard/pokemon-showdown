@@ -6,7 +6,7 @@ A participant is a directory containing:
 my-bot/
 ├── main.py
 ├── team.txt
-├── requirements.txt     # optional; dependencies are not installed in Milestone 2A
+├── requirements.txt     # optional; installed by pip during Docker preparation
 └── other assets         # optional
 ```
 
@@ -31,19 +31,40 @@ Validate a submission:
 node dist/tournament/cli.js validate path/to/my-bot
 ```
 
-Run two submissions:
+Prepare/cache an isolated participant image:
+
+```bash
+node dist/tournament/cli.js prepare path/to/my-bot
+```
+
+Run two submissions with the default Docker isolation:
 
 ```bash
 node dist/tournament/cli.js match path/to/alice path/to/bob --seed 1234 --output results/alice-vs-bob
 ```
+
+The match command prepares both images before battle start. If Docker is missing, stopped, or a build fails, the match fails without starting and never silently runs participant code on the host. Trusted local development can opt in explicitly with `--runtime host`; this mode has no sandbox and must not be used for untrusted submissions.
 
 Every actionable state supplies all complete valid public responses in `state["request"]["legal_actions"]`. Stable
 own-team IDs are `team_0` through `team_5`; Open Team Sheet opponent IDs are `opponent_0` through `opponent_5`.
 The same `choose_action` function handles Team Preview, ordinary turns, and forced switches. The runtime retries
 invalid responses, enforces the shared decision deadline, and uses a deterministic legal fallback after failures.
 
-Participant dependencies are not installed and participant code is not sandboxed in Milestone 2A. Only run trusted
-submissions in this version.
+The tournament generates all build definitions. Participant Dockerfiles and symlinks are rejected. Each non-comment
+`requirements.txt` line must be an exact `name[extras]==version` registry pin. Installation runs non-root from a
+trusted directory with isolated Python, `--only-binary=:all:`, and `--no-deps`; URLs, paths, editable/VCS/source
+installs, pip options, markers, constraints, and dependency build hooks are rejected. List every required package
+explicitly. Dependency retrieval may use network access during preparation; match containers have no network.
+`requirements.txt` is limited to 64 KiB. Arbitrary regular model/configuration/assets are copied into `/submission`,
+subject by default to a 1 GiB total and 10,000-file ceiling. Participant apt/system packages, raw Docker flags,
+build secrets/SSH forwarding, privileged features, and runtime mounts are not supported.
+
+Each match worker is an ephemeral non-root container with IPC disabled, a read-only root, a bounded writable `/tmp`,
+dropped capabilities, no-new-privileges, default Docker seccomp, and explicit CPU/memory/PID/file-descriptor limits. It gets
+no host bind mounts, Docker socket, devices, host environment, or runtime network. Runtime artifacts record the
+resolved image IDs, submission content hash, Python version, and effective limits. Container isolation mitigates
+ordinary untrusted application behavior but does not claim protection from Docker daemon/kernel/container escapes
+or malicious package supply-chain compromise.
 
 Participant display names and machine IDs must be unique within a match. Result artifacts record the winning side
 and participant ID in addition to Showdown's display-name winner.

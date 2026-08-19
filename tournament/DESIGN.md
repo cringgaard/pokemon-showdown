@@ -1,6 +1,6 @@
 # Pokémon Showdown Bot Tournament — VGC Bot Harness Design
 
-Status: living implementation specification. Milestones 1 and 2A are complete; Milestone 2B is the current implementation milestone. This document defines the preserved v1 contracts and the roadmap/constraints for spectator presentation, sandboxing, and tournament orchestration.
+Status: living implementation specification. Milestones 1, 2A, and 2B are complete; Milestone 2C is the current implementation milestone. This document defines the preserved v1 contracts and the roadmap/constraints for spectator presentation, sandboxing, and tournament orchestration.
 
 The tournament uses Pokémon Showdown as the authoritative battle simulator. Participant bots receive a stable semantic Python API built only from their player-visible information, while spectators may consume a separate one-way presentation stream.
 
@@ -16,7 +16,7 @@ The tournament harness should:
 - run each bot as a persistent Python process for a match;
 - support participant code, models, and configuration files;
 - validate submissions and teams before a match begins;
-- eventually execute untrusted participant code in an isolated environment;
+- execute participant code in a controlled Docker environment by default;
 - detect malformed, illegal, hanging, or repeatedly-invalid bots and continue using deterministic legal fallback;
 - record enough information for deterministic replay, debugging, audit, and spectator presentation;
 - provide a visual spectator experience suitable for showing live tournament matches on a shared screen;
@@ -45,11 +45,11 @@ Milestone 1 established:
 
 Implement real participant directories and preflight validation. The immediate goal is that two ordinary submission folders can be validated and run without editing tournament source code.
 
-### Milestone 2B — spectator proof of concept — CURRENT
+### Milestone 2B — spectator proof of concept — COMPLETE
 
 Prove that a completed or live harness match can be rendered visually in a browser from the spectator stream/log. The frontend must remain read-only with respect to match execution.
 
-### Milestone 2C — isolated participant execution
+### Milestone 2C — isolated participant execution — CURRENT
 
 Move participant execution behind a sandbox/container boundary with explicit resource and network policy.
 
@@ -80,7 +80,7 @@ Add scheduling, standings/series handling, crash-resume behavior, aggregate resu
             BotState JSON         BotState JSON
                   |                     |
                   v                     v
-             PythonWorker          PythonWorker
+               BotWorker             BotWorker
                   |                     |
                   v                     v
              BotResponse           BotResponse
@@ -102,6 +102,8 @@ The information boundary is asymmetric by design:
 - spectator data must never be routed back into either bot's state or decision process.
 
 The spectator path is an output path only. A disconnected, crashed, or slow viewer must not block or alter battle execution.
+
+For Milestone 2C, each `BotWorker` is created by a prepared generic factory. The safe participant CLI supplies Docker-backed factories; the explicit trusted-development path supplies host Python factories. Docker image preparation and container lifecycle code remain outside `MatchRunner`.
 
 ## 4. Showdown integration
 
@@ -129,7 +131,7 @@ The participant-facing directory shape is:
 submission/
 ├── main.py
 ├── team.txt
-├── requirements.txt        # optional; installation deferred until isolated runtime work
+├── requirements.txt        # optional; installed by pip during Docker preparation
 └── arbitrary extra files   # models/config/assets
 ```
 
@@ -311,7 +313,7 @@ The omniscient stream must never be consulted to repair or enrich bot-visible st
 
 ## 12. Runtime protocol and supervision
 
-Use one persistent Python subprocess per bot per match. Node/Python communication uses JSON Lines over stdin/stdout; stdout is reserved for the worker protocol and participant output must be redirected/captured separately.
+Use one persistent Python worker per bot per worker lifetime. Node/Python communication uses JSON Lines over stdin/stdout; stdout is reserved for the worker protocol and participant output must be redirected/captured separately. A narrow `BotWorker`/factory boundary supplies either the default prepared Docker worker or an explicitly selected trusted host worker without changing `BotController` decision logic.
 
 Failures must never deadlock a match.
 
@@ -331,6 +333,31 @@ A Showdown `[Unavailable choice]` caused by newly revealed hidden information is
 On deadline expiry or exhausted invalid attempts, select a deterministic random member of the current `legal_actions`. Log every fallback and reason.
 
 A hung worker is terminated; fallback continues the current decision; the worker is restarted before that participant's next decision.
+
+### 12.1 Milestone 2C Docker preparation and runtime policy
+
+Participant-facing CLI matches use Docker by default. `--runtime host` is the only host escape hatch and is explicitly trusted/unsafe; Docker unavailability or build failure never falls back to it. Both participant images are prepared before battle start, and workers are started through the generic runtime boundary before the first Showdown request is issued.
+
+The tournament runtime is generated from the official `python:3.12.13-slim-bookworm` image. Preparation resolves and records its local immutable image ID, then builds a tournament-controlled runtime layer containing the harness `worker.py` and a non-root UID/GID `10001:10001`. Participant images use another tournament-generated Dockerfile and copy every regular submission file into `/submission`. Optional requirements are restricted to exact `name[extras]==version` registry pins, limited to 64 KiB, and installed non-root from `/opt/tournament` with `/usr/local/bin/python -I -m pip --only-binary=:all: --no-deps`. URLs, paths, editable/VCS/source inputs, pip options, markers, constraints, and dependency build hooks are rejected, so preparation does not execute participant-controlled build code. Participant Dockerfiles and symlinks are rejected; apt, raw build flags, secrets, SSH forwarding, privileged entitlements, and arbitrary mounts are not supported. Build networking remains a package-index supply-chain surface, but only wheel retrieval and installation are supported. `main.py` is not invoked by the tournament build definition.
+
+Submission discovery enforces configurable ceilings before a build context is created: 1 GiB total and 10,000 files by default. File contents are streamed into the SHA-256 hash, whose other inputs are the sandbox policy version, resolved tournament runtime image ID, relative paths, modes, and sizes. Images are cached under that hash; matches execute the resolved immutable participant image ID. The artifact records the participant content hash, base/runtime/participant image IDs, Python version, and effective sandbox policy.
+
+Each worker container uses this default policy:
+
+- network mode `none`;
+- IPC mode `none`, so Docker does not add a writable `/dev/shm` shared-memory mount;
+- read-only root filesystem and only `/tmp` writable as a `64 MiB` `rw,noexec,nosuid,nodev` tmpfs;
+- UID/GID `10001:10001`, all capabilities dropped, `no-new-privileges`, Docker's default seccomp/confinement, and Docker's init process;
+- `512 MiB` memory with total memory plus swap also limited to `512 MiB`, `1` CPU, `64` PIDs, and `nofile=256:256`;
+- no bind mounts, volumes, devices, Docker socket, privileged mode, host namespaces, published ports, or GPU access;
+- Docker logging disabled; diagnostics are consumed only through the bounded attached stderr stream;
+- participant process environment rebuilt with `env -i` and only `BOT_SEED`, `HOME`, `LANG`, `PATH`, `PYTHONDONTWRITEBYTECODE`, `PYTHONPATH`, `PYTHONUNBUFFERED`, and `TMPDIR`.
+
+Resource settings, submission byte/file ceilings, and the `300000 ms` default build timeout are configurable through typed tournament CLI options; arbitrary Docker flags are never accepted. A unique managed name/label and container ID are tracked for every worker lifetime. Timeout, protocol failure, controller stop, normal completion, and match cleanup kill/remove the actual container rather than relying on the local attached Docker CLI process to terminate descendants. The next decision creates a fresh container while the original deterministic fallback and shared-deadline behavior remain unchanged.
+
+Host-side transport retains at most a `1 MiB` partial JSONL protocol line and `256 KiB` of stderr per worker lifetime. Oversized protocol output terminates that worker; excess stderr is discarded after an explicit truncation marker. These quotas apply to both Docker and trusted host workers.
+
+Docker containers are a practical boundary for an internal competition, not a perfect hostile-kernel boundary. Docker daemon, Linux kernel, base-image, package-index, and malicious prebuilt-wheel compromise or escape are outside this milestone's threat model. Source/dependency build execution is deliberately unsupported. VM/microVM isolation, signed dependency infrastructure, system packages, and GPU policy remain deferred.
 
 ## 13. Match runner
 
@@ -366,7 +393,7 @@ match/
 
 `battle.protocol.log` is a first-class artifact. It should preserve the ordered spectator/rendering protocol needed to replay the match visually, not merely a human-readable summary.
 
-`metadata.json`/`result.json` should include enough stable data for audit and later tournament aggregation, such as:
+Artifact schema version 2 adds participant runtime audit policy while preserving the established result/protocol/state files. `metadata.json`/`result.json` should include enough stable data for audit and later tournament aggregation, such as:
 
 - participant identifiers/names;
 - format;
@@ -484,9 +511,9 @@ Do not build standings/brackets or a polished cafeteria shell in this milestone.
 
 ## 18. Milestone 2C — isolated execution
 
-Before accepting untrusted coworker submissions, replace direct host execution with an isolation boundary.
+Milestone 2C implements the Docker preparation/runtime policy in section 12.1 behind the worker factory boundary. Docker is the participant-facing default; direct host execution remains only as the explicit trusted-development option.
 
-The target runtime should support:
+The implemented runtime supports:
 
 - one isolated environment per participant worker/match as appropriate;
 - explicit Python version;
@@ -496,10 +523,10 @@ The target runtime should support:
 - controlled writable filesystem locations;
 - process-tree termination on timeout;
 - optional dependency installation from `requirements.txt` under a controlled policy;
-- mounting/including participant model/config assets;
+- including participant model/config assets in the prepared image without runtime host mounts;
 - future GPU policy if explicitly enabled.
 
-Preserve the existing runtime-controller boundary so sandboxing does not require rewriting battle orchestration.
+The runtime-controller boundary is preserved: `MatchRunner` receives prepared generic worker factories and contains no Docker CLI, image-build, or container-cleanup logic.
 
 ## 19. Milestone 3 — tournament orchestration
 
@@ -588,7 +615,7 @@ At minimum:
 
 ### Runtime/sandbox tests
 
-Retain timeout/exception/invalid/unavailable-choice tests and later add isolation/resource-policy tests.
+Retain timeout/exception/invalid/unavailable-choice tests and cover generated build policy, actual container inspection, filesystem/network/environment isolation, arbitrary assets, dependencies, timeout/restart/cleanup, output abuse, and a Docker-vs-Docker match. Docker integration tests explicitly skip only when Docker Engine is genuinely unavailable.
 
 ## 22. Repository structure
 
@@ -611,7 +638,8 @@ tournament/
 test/tournament/
 ├── ...existing milestone-1 tests...
 ├── submissions.js
-└── spectator.js              # when Milestone 2B begins
+├── spectator.js
+└── sandbox.js                # Docker integration skips only when Engine is unavailable
 ```
 
 Exact filenames may change where repository conventions suggest a cleaner organization.
@@ -632,13 +660,13 @@ Do not implement all remaining milestones in one pass.
 8. Run the tournament-focused tests, TypeScript/lint checks, and full repository verification.
 9. Open a focused PR for review.
 
-### Current session: Milestone 2B
+### Completed session: Milestone 2B
 
 Research the existing Pokémon Showdown client/rendering path first, then implement the smallest browser spectator POC that can consume the saved/live spectator stream. Do not invent a parallel mechanics renderer.
 
-### After spectator POC: Milestone 2C
+### Current session: Milestone 2C
 
-Introduce isolated execution behind the runtime abstraction.
+Introduce isolated execution behind the runtime abstraction, with Docker as the safe CLI default and explicit trusted host execution only.
 
 ## 24. Design principles to preserve
 

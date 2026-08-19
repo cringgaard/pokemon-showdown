@@ -1,6 +1,7 @@
 'use strict';
 
 const fs = require('fs');
+const http = require('http');
 const os = require('os');
 const path = require('path');
 const assert = require('../assert');
@@ -58,7 +59,7 @@ describe('Tournament spectator publication and transport', function () {
 	it('serves a replay through the official Showdown embed and preserves stored protocol order', async () => {
 		const server = await startReplayServer(makeReplayDirectory(temporaryRoot), { port: 0 });
 		servers.push(server);
-		const html = await (await fetch(server.url())).text();
+		const html = await requestText(server.url());
 		assert(html.includes('Alice Bot'));
 		assert(html.includes('Bob Bot'));
 		assert(html.includes(OFFICIAL_REPLAY_EMBED_URL));
@@ -114,23 +115,46 @@ describe('Tournament spectator publication and transport', function () {
 });
 
 async function openEvents(url, expected, afterOpen, headers) {
-	const controller = new AbortController();
-	const responsePromise = fetch(url, { signal: controller.signal, headers });
-	if (afterOpen) setTimeout(afterOpen, 20);
-	const response = await responsePromise;
-	const reader = response.body.getReader();
-	let text = '';
-	while (!text.includes(expected)) {
-		const result = await Promise.race([
-			reader.read(),
-			new Promise((resolve, reject) => {
-				setTimeout(() => reject(new Error('Timed out reading spectator events')), 2000);
-			}),
-		]);
-		if (result.done) break;
-		text += Buffer.from(result.value).toString('utf8');
-	}
-	return { text, abort: () => controller.abort() };
+	return new Promise((resolve, reject) => {
+		let settled = false;
+		const request = http.get(url, { headers }, response => {
+			response.setEncoding('utf8');
+			let text = '';
+			response.on('data', chunk => {
+				text += chunk;
+				if (!settled && text.includes(expected)) {
+					settled = true;
+					clearTimeout(timeout);
+					resolve({ text, abort: () => request.destroy() });
+				}
+			});
+			response.on('end', () => {
+				if (!settled) reject(new Error(`Spectator events ended before ${expected}`));
+			});
+		});
+		if (afterOpen) setTimeout(afterOpen, 20);
+		request.on('error', error => {
+			if (!settled) reject(error);
+		});
+		const timeout = setTimeout(() => {
+			if (!settled) {
+				settled = true;
+				request.destroy();
+				reject(new Error('Timed out reading spectator events'));
+			}
+		}, 2000);
+	});
+}
+
+function requestText(url) {
+	return new Promise((resolve, reject) => {
+		http.get(url, response => {
+			response.setEncoding('utf8');
+			let text = '';
+			response.on('data', chunk => { text += chunk; });
+			response.on('end', () => resolve(text));
+		}).on('error', reject);
+	});
 }
 
 function makeReplayDirectory(root) {
