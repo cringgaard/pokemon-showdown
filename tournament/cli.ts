@@ -3,7 +3,9 @@ import type { PRNGSeed } from '../sim/prng';
 import { HostPythonWorkerFactory } from './bots/python-worker';
 import type { BotWorkerFactory } from './bots/worker-interface';
 import { DEFAULT_FORMAT, MatchRunner } from './match/match-runner';
-import { DockerImagePreparer } from './sandbox/image-preparer';
+import {
+	DEFAULT_MAX_SUBMISSION_BYTES, DEFAULT_MAX_SUBMISSION_FILES, DockerImagePreparer,
+} from './sandbox/image-preparer';
 import { DEFAULT_DOCKER_RESOURCE_POLICY, type DockerResourcePolicy } from './sandbox/policy';
 import { ProtocolStore } from './spectator/protocol-store';
 import { SpectatorServer, startReplayServer } from './spectator/server';
@@ -38,7 +40,8 @@ async function main(argv = process.argv.slice(2)) {
 		assertKnownOptions(args, [
 			'format', 'seed', 'output', 'decision-timeout-ms', 'max-invalid-attempts', 'match-timeout-ms',
 			'spectator-port', 'runtime', 'build-timeout-ms', 'container-memory-mb', 'container-cpus',
-			'container-pids', 'container-tmpfs-mb', 'container-nofile',
+			'container-pids', 'container-tmpfs-mb', 'container-nofile', 'submission-max-bytes',
+			'submission-max-files',
 		]);
 		const output = requiredOption(args, 'output');
 		const seed = parseSeed(args.options.get('seed') || '1,2,3,4');
@@ -50,7 +53,6 @@ async function main(argv = process.argv.slice(2)) {
 		let p2WorkerFactory: BotWorkerFactory;
 		if (runtime === 'docker') {
 			const preparer = dockerPreparer(args);
-			await preparer.assertAvailable();
 			p1WorkerFactory = (await preparer.prepare(p1)).workerFactory;
 			p2WorkerFactory = (await preparer.prepare(p2)).workerFactory;
 		} else {
@@ -113,7 +115,7 @@ async function main(argv = process.argv.slice(2)) {
 		if (args.positionals.length !== 1) throw new Error('prepare requires exactly one submission directory.\n\n' + usage());
 		assertKnownOptions(args, [
 			'format', 'build-timeout-ms', 'container-memory-mb', 'container-cpus', 'container-pids',
-			'container-tmpfs-mb', 'container-nofile',
+			'container-tmpfs-mb', 'container-nofile', 'submission-max-bytes', 'submission-max-files',
 		]);
 		const submission = loadSubmission(args.positionals[0], { format });
 		const prepared = await dockerPreparer(args).prepare(submission);
@@ -201,6 +203,10 @@ function dockerPreparer(args: ParsedArguments) {
 	return new DockerImagePreparer({
 		buildTimeoutMs: integerOption(args, 'build-timeout-ms'),
 		resourcePolicy,
+		submissionLimits: {
+			maxBytes: integerOption(args, 'submission-max-bytes') ?? DEFAULT_MAX_SUBMISSION_BYTES,
+			maxFiles: integerOption(args, 'submission-max-files') ?? DEFAULT_MAX_SUBMISSION_FILES,
+		},
 	});
 }
 
@@ -293,6 +299,8 @@ function usage() {
 		'  --container-pids COUNT         Process limit (default: 64)',
 		'  --container-tmpfs-mb MB        Writable /tmp limit (default: 64)',
 		'  --container-nofile COUNT       File descriptor soft/hard limit (default: 256)',
+		'  --submission-max-bytes BYTES   Total submission size limit (default: 1073741824)',
+		'  --submission-max-files COUNT   Submission file-count limit (default: 10000)',
 		'',
 	].join('\n');
 }

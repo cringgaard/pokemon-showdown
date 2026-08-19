@@ -1,6 +1,6 @@
 import type { RuntimeAudit } from '../bots/worker-interface';
 
-export const SANDBOX_POLICY_VERSION = 1;
+export const SANDBOX_POLICY_VERSION = 2;
 export const PYTHON_BASE_IMAGE = 'python:3.12.13-slim-bookworm';
 export const PYTHON_RUNTIME_VERSION = '3.12.13';
 export const CONTAINER_USER = '10001:10001';
@@ -38,6 +38,7 @@ export interface PreparedDockerRuntimeAudit extends RuntimeAudit {
 	base_image_id: string;
 	python_version: string;
 	network: 'none';
+	ipc: 'none';
 	root_filesystem: 'read-only';
 	tmpfs: { path: '/tmp', size_mb: number, options: string[] };
 	user: string;
@@ -66,6 +67,7 @@ export function dockerRuntimeAudit(
 		base_image_id: baseImageID,
 		python_version: PYTHON_RUNTIME_VERSION,
 		network: 'none',
+		ipc: 'none',
 		root_filesystem: 'read-only',
 		tmpfs: { path: '/tmp', size_mb: policy.tmpfsMB, options: ['rw', 'noexec', 'nosuid', 'nodev'] },
 		user: CONTAINER_USER,
@@ -96,6 +98,7 @@ export function containerCreateArgs(
 		'--label', `${MANAGED_CONTAINER_LABEL}=true`,
 		'--label', `${SANDBOX_VERSION_LABEL}=${SANDBOX_POLICY_VERSION}`,
 		'--network', 'none',
+		'--ipc', 'none',
 		'--read-only',
 		'--tmpfs', `/tmp:rw,noexec,nosuid,nodev,size=${policy.tmpfsMB}m,mode=1777`,
 		'--cap-drop', 'ALL',

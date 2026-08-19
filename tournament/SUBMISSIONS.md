@@ -50,14 +50,17 @@ own-team IDs are `team_0` through `team_5`; Open Team Sheet opponent IDs are `op
 The same `choose_action` function handles Team Preview, ordinary turns, and forced switches. The runtime retries
 invalid responses, enforces the shared decision deadline, and uses a deterministic legal fallback after failures.
 
-The tournament generates all build definitions. Participant Dockerfiles and symlinks are rejected. Optional
-`requirements.txt` entries are installed with non-root `pip` into the prepared image; arbitrary regular model,
-configuration, and asset files are copied into `/submission`. Participant apt/system packages, raw Docker flags,
-build secrets/SSH forwarding, privileged features, and runtime mounts are not supported. Dependency retrieval may
-use network access while building; match containers have no network.
+The tournament generates all build definitions. Participant Dockerfiles and symlinks are rejected. Each non-comment
+`requirements.txt` line must be an exact `name[extras]==version` registry pin. Installation runs non-root from a
+trusted directory with isolated Python, `--only-binary=:all:`, and `--no-deps`; URLs, paths, editable/VCS/source
+installs, pip options, markers, constraints, and dependency build hooks are rejected. List every required package
+explicitly. Dependency retrieval may use network access during preparation; match containers have no network.
+`requirements.txt` is limited to 64 KiB. Arbitrary regular model/configuration/assets are copied into `/submission`,
+subject by default to a 1 GiB total and 10,000-file ceiling. Participant apt/system packages, raw Docker flags,
+build secrets/SSH forwarding, privileged features, and runtime mounts are not supported.
 
-Each match worker is an ephemeral non-root container with a read-only root, a bounded writable `/tmp`, dropped
-capabilities, no-new-privileges, default Docker seccomp, and explicit CPU/memory/PID/file-descriptor limits. It gets
+Each match worker is an ephemeral non-root container with IPC disabled, a read-only root, a bounded writable `/tmp`,
+dropped capabilities, no-new-privileges, default Docker seccomp, and explicit CPU/memory/PID/file-descriptor limits. It gets
 no host bind mounts, Docker socket, devices, host environment, or runtime network. Runtime artifacts record the
 resolved image IDs, submission content hash, Python version, and effective limits. Container isolation mitigates
 ordinary untrusted application behavior but does not claim protection from Docker daemon/kernel/container escapes

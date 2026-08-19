@@ -11,11 +11,20 @@ import { assertDockerAvailable, inspectImageID, runDocker } from './docker-cli';
 import { DockerPythonWorkerFactory } from './runtime';
 
 export const DEFAULT_BUILD_TIMEOUT_MS = 5 * 60_000;
+export const DEFAULT_MAX_SUBMISSION_BYTES = 1024 * 1024 * 1024;
+export const DEFAULT_MAX_SUBMISSION_FILES = 10_000;
+export const MAX_REQUIREMENTS_BYTES = 64 * 1024;
 const IMAGE_NAMESPACE = 'pokemon-showdown-tournament';
+
+export interface SubmissionLimits {
+	maxBytes: number;
+	maxFiles: number;
+}
 
 export interface ImagePreparerOptions {
 	buildTimeoutMs?: number;
 	resourcePolicy?: Partial<DockerResourcePolicy>;
+	submissionLimits?: Partial<SubmissionLimits>;
 }
 
 export interface PreparedParticipantImage {
@@ -30,11 +39,18 @@ export interface PreparedParticipantImage {
 export class DockerImagePreparer {
 	readonly buildTimeoutMs: number;
 	readonly resourcePolicy: DockerResourcePolicy;
+	readonly submissionLimits: SubmissionLimits;
 
 	constructor(options: ImagePreparerOptions = {}) {
 		this.buildTimeoutMs = options.buildTimeoutMs ?? DEFAULT_BUILD_TIMEOUT_MS;
 		this.resourcePolicy = { ...DEFAULT_DOCKER_RESOURCE_POLICY, ...options.resourcePolicy };
+		this.submissionLimits = {
+			maxBytes: DEFAULT_MAX_SUBMISSION_BYTES,
+			maxFiles: DEFAULT_MAX_SUBMISSION_FILES,
+			...options.submissionLimits,
+		};
 		validatePolicy(this.resourcePolicy);
+		validateSubmissionLimits(this.submissionLimits);
 	}
 
 	async assertAvailable() {
@@ -43,19 +59,21 @@ export class DockerImagePreparer {
 
 	async prepare(submission: LoadedSubmission): Promise<PreparedParticipantImage> {
 		assertNoParticipantDockerfile(submission.directory);
+		const files = submissionFiles(submission.directory, this.submissionLimits);
+		if (submission.requirementsPath) validateRequirementsFile(submission.requirementsPath);
 		await this.assertAvailable();
 		const baseImage = await this.ensureBaseImage();
 		const runtimeImage = await this.ensureTournamentRuntime(baseImage.imageID, baseImage.reference);
 		const { imageID: baseImageID } = baseImage;
 		const { imageID: runtimeImageID } = runtimeImage;
-		const contentHash = hashSubmission(submission.directory, runtimeImageID);
+		const contentHash = await hashSubmissionFiles(files, runtimeImageID);
 		const tag = `${IMAGE_NAMESPACE}/participant:${contentHash}`;
 		let imageID = await inspectImageID(tag);
 		const cached = !!imageID;
 		if (!imageID) {
 			const context = fs.mkdtempSync(path.join(os.tmpdir(), 'showdown-participant-build-'));
 			try {
-				copySubmission(submission.directory, path.join(context, 'submission'));
+				copySubmission(files, path.join(context, 'submission'));
 				fs.writeFileSync(
 					path.join(context, 'Dockerfile'), participantDockerfile(runtimeImage.reference, !!submission.requirementsPath)
 				);
@@ -112,12 +130,31 @@ export class DockerImagePreparer {
 	}
 }
 
-export function hashSubmission(directory: string, runtimeImageID: string) {
+export async function hashSubmission(
+	directory: string, runtimeImageID: string, limits: Partial<SubmissionLimits> = {}
+) {
+	const effectiveLimits = {
+		maxBytes: DEFAULT_MAX_SUBMISSION_BYTES,
+		maxFiles: DEFAULT_MAX_SUBMISSION_FILES,
+		...limits,
+	};
+	validateSubmissionLimits(effectiveLimits);
+	return hashSubmissionFiles(submissionFiles(directory, effectiveLimits), runtimeImageID);
+}
+
+async function hashSubmissionFiles(files: SubmissionFile[], runtimeImageID: string) {
 	const hash = createHash('sha256');
 	hash.update(`sandbox-policy:${SANDBOX_POLICY_VERSION}\0runtime:${runtimeImageID}\0`);
-	for (const entry of submissionFiles(directory)) {
+	for (const entry of files) {
 		hash.update(`path:${entry.relativePath}\0mode:${entry.mode}\0size:${entry.size}\0`);
-		hash.update(fs.readFileSync(entry.fullPath));
+		let bytesRead = 0;
+		for await (const chunk of fs.createReadStream(entry.fullPath)) {
+			bytesRead += chunk.length;
+			hash.update(chunk);
+		}
+		if (bytesRead !== entry.size) {
+			throw new Error(`Submission file changed while hashing: ${JSON.stringify(entry.fullPath)}.`);
+		}
 		hash.update('\0');
 	}
 	return hash.digest('hex');
@@ -142,35 +179,42 @@ export function participantDockerfile(runtimeImageID: string, hasRequirements: b
 	return [
 		`FROM ${runtimeImageID}`,
 		`USER ${CONTAINER_USER}`,
-		'WORKDIR /submission',
+		'WORKDIR /opt/tournament',
 		'COPY --chown=10001:10001 submission/ /submission/',
 		...(hasRequirements ? [
-			'RUN python -m pip install --disable-pip-version-check --no-cache-dir --target /opt/participant-python -r /submission/requirements.txt',
+			'RUN /usr/local/bin/python -I -m pip install --disable-pip-version-check --no-cache-dir --no-compile --only-binary=:all: --no-deps --target /opt/participant-python -r /submission/requirements.txt',
 		] : []),
+		'WORKDIR /submission',
 		'ENTRYPOINT []',
 		'CMD []',
 		'',
 	].join('\n');
 }
 
-function copySubmission(source: string, destination: string) {
+interface SubmissionFile {
+	fullPath: string;
+	relativePath: string;
+	mode: number;
+	size: number;
+}
+
+function copySubmission(files: SubmissionFile[], destination: string) {
 	fs.mkdirSync(destination, { recursive: true });
-	for (const entry of fs.readdirSync(source, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
-		const from = path.join(source, entry.name);
-		const to = path.join(destination, entry.name);
-		if (entry.isSymbolicLink()) throw new Error(`Submission symlinks are not supported: ${JSON.stringify(from)}.`);
-		if (entry.isDirectory()) {
-			copySubmission(from, to);
-		} else if (entry.isFile()) {
-			fs.copyFileSync(from, to);
-		} else {
-			throw new Error(`Submission contains unsupported special file: ${JSON.stringify(from)}.`);
+	for (const entry of files) {
+		const current = fs.lstatSync(entry.fullPath);
+		if (!current.isFile() || current.size !== entry.size || (current.mode & 0o777) !== entry.mode) {
+			throw new Error(`Submission file changed while preparing the build context: ${JSON.stringify(entry.fullPath)}.`);
 		}
+		const target = path.join(destination, ...entry.relativePath.split('/'));
+		fs.mkdirSync(path.dirname(target), { recursive: true });
+		fs.copyFileSync(entry.fullPath, target);
 	}
 }
 
-function submissionFiles(root: string) {
-	const files: { fullPath: string, relativePath: string, mode: number, size: number }[] = [];
+function submissionFiles(root: string, limits: SubmissionLimits) {
+	const files: SubmissionFile[] = [];
+	let totalBytes = 0;
+	let fileCount = 0;
 	const visit = (directory: string) => {
 		for (const entry of fs.readdirSync(directory, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
 			const fullPath = path.join(directory, entry.name);
@@ -179,6 +223,14 @@ function submissionFiles(root: string) {
 				visit(fullPath);
 			} else if (entry.isFile()) {
 				const stat = fs.statSync(fullPath);
+				fileCount++;
+				if (fileCount > limits.maxFiles) {
+					throw new Error(`Submission exceeds the ${limits.maxFiles}-file limit.`);
+				}
+				totalBytes += stat.size;
+				if (totalBytes > limits.maxBytes) {
+					throw new Error(`Submission exceeds the ${limits.maxBytes}-byte total size limit.`);
+				}
 				files.push({
 					fullPath,
 					relativePath: path.relative(root, fullPath).split(path.sep).join('/'),
@@ -192,6 +244,25 @@ function submissionFiles(root: string) {
 	};
 	visit(root);
 	return files;
+}
+
+export function validateRequirementsFile(filename: string) {
+	const stat = fs.statSync(filename);
+	if (stat.size > MAX_REQUIREMENTS_BYTES) {
+		throw new Error(`requirements.txt exceeds the ${MAX_REQUIREMENTS_BYTES}-byte limit.`);
+	}
+	const requirement = /^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?(?:\[[A-Za-z0-9._-]+(?:,[A-Za-z0-9._-]+)*\])?==[A-Za-z0-9](?:[A-Za-z0-9._+!-]*[A-Za-z0-9])?$/;
+	for (const [index, rawLine] of fs.readFileSync(filename, 'utf8').split(/\r?\n/).entries()) {
+		const line = rawLine.replace(/\s+#.*$/, '').trim();
+		if (!line || line.startsWith('#')) continue;
+		if (!requirement.test(line)) {
+			throw new Error(
+				`Unsupported requirements.txt entry on line ${index + 1}: ${JSON.stringify(rawLine)}. ` +
+				'Only exact name[extras]==version pins are accepted; URLs, paths, editable installs, options, ' +
+				'markers, constraints, and source/VCS requirements are not supported.'
+			);
+		}
+	}
 }
 
 function assertNoParticipantDockerfile(directory: string) {
@@ -215,5 +286,12 @@ function validatePolicy(policy: DockerResourcePolicy) {
 	if (!Number.isSafeInteger(policy.memoryMB) || !Number.isSafeInteger(policy.pids) ||
 		!Number.isSafeInteger(policy.tmpfsMB) || !Number.isSafeInteger(policy.nofile)) {
 		throw new Error('Docker memory, PIDs, tmpfs, and nofile limits must be integers.');
+	}
+}
+
+function validateSubmissionLimits(limits: SubmissionLimits) {
+	if (!Number.isSafeInteger(limits.maxBytes) || limits.maxBytes <= 0 ||
+		!Number.isSafeInteger(limits.maxFiles) || limits.maxFiles <= 0) {
+		throw new Error('Submission byte and file-count limits must be positive safe integers.');
 	}
 }

@@ -9,7 +9,7 @@ const { BotController } = require('../../dist/tournament/bots/runtime');
 const { loadReplayArtifacts } = require('../../dist/tournament/spectator/replay-loader');
 const { MatchRunner, DEFAULT_FORMAT } = require('../../dist/tournament/match/match-runner');
 const {
-	DockerImagePreparer, hashSubmission, participantDockerfile, runtimeDockerfile,
+	DockerImagePreparer, hashSubmission, participantDockerfile, runtimeDockerfile, validateRequirementsFile,
 } = require('../../dist/tournament/sandbox/image-preparer');
 const { runDocker } = require('../../dist/tournament/sandbox/docker-cli');
 const {
@@ -38,6 +38,7 @@ describe('Tournament Docker sandbox policy construction', () => {
 	it('constructs a locked-down container without mounts, privileges, devices, or host environment', () => {
 		const args = containerCreateArgs('sha256:participant', 'worker-name', 'seed-value', DEFAULT_DOCKER_RESOURCE_POLICY);
 		assert.deepEqual(option(args, '--network'), ['none']);
+		assert.deepEqual(option(args, '--ipc'), ['none']);
 		assert(args.includes('--read-only'));
 		assert.deepEqual(option(args, '--cap-drop'), ['ALL']);
 		assert.deepEqual(option(args, '--security-opt'), ['no-new-privileges=true']);
@@ -50,7 +51,7 @@ describe('Tournament Docker sandbox policy construction', () => {
 		assert(/^\/tmp:.*size=64m/.test(option(args, '--tmpfs')[0]));
 		assert(args.includes('--init'));
 		assert.deepEqual(option(args, '--log-driver'), ['none']);
-		for (const forbidden of ['--privileged', '--volume', '-v', '--mount', '--device', '--pid', '--ipc', '--env', '-e']) {
+		for (const forbidden of ['--privileged', '--volume', '-v', '--mount', '--device', '--pid', '--env', '-e']) {
 			assert(!args.includes(forbidden), forbidden);
 		}
 		const envIndex = args.indexOf('/usr/bin/env');
@@ -59,21 +60,68 @@ describe('Tournament Docker sandbox policy construction', () => {
 			[...PROCESS_ENVIRONMENT_ALLOWLIST].sort());
 	});
 
-	it('uses tournament-generated build definitions and hashes arbitrary participant assets', () => {
+	it('uses tournament-generated build definitions and hashes arbitrary participant assets', async () => {
 		const submission = path.join(temporaryRoot, 'submission');
 		fs.mkdirSync(submission);
 		fs.writeFileSync(path.join(submission, 'main.py'), 'def choose_action(state): return {}\n');
 		fs.writeFileSync(path.join(submission, 'team.txt'), team);
 		fs.writeFileSync(path.join(submission, 'model.bin'), 'model-v1');
-		const first = hashSubmission(submission, 'sha256:runtime');
+		const first = await hashSubmission(submission, 'sha256:runtime');
 		fs.writeFileSync(path.join(submission, 'model.bin'), 'model-v2');
-		assert.notEqual(hashSubmission(submission, 'sha256:runtime'), first);
+		assert.notEqual(await hashSubmission(submission, 'sha256:runtime'), first);
 		assert(/^FROM sha256:base/m.test(runtimeDockerfile('sha256:base')));
 		const generated = participantDockerfile('sha256:runtime', true);
 		assert(/^FROM sha256:runtime/m.test(generated));
 		assert(/COPY --chown=10001:10001 submission\/ \/submission\//.test(generated));
-		assert(/pip install .*requirements\.txt/.test(generated));
+		assert(/WORKDIR \/opt\/tournament[\s\S]*python -I -m pip install/.test(generated));
+		assert(/--only-binary=:all: --no-deps/.test(generated));
+		assert(/-r \/submission\/requirements\.txt/.test(generated));
 		assert(!generated.includes('privileged'));
+	});
+
+	it('streams large asset hashing and enforces submission size and file-count ceilings', async () => {
+		const submission = path.join(temporaryRoot, 'streamed-submission');
+		fs.mkdirSync(submission);
+		const model = path.join(submission, 'model.bin');
+		const descriptor = fs.openSync(model, 'w');
+		try {
+			fs.ftruncateSync(descriptor, 8 * 1024 * 1024);
+		} finally {
+			fs.closeSync(descriptor);
+		}
+		const originalReadFileSync = fs.readFileSync;
+		Object.defineProperty(fs, 'readFileSync', { configurable: true, value(filename, ...args) {
+			if (path.resolve(filename) === model) throw new Error('large asset was read wholly');
+			return originalReadFileSync.call(this, filename, ...args);
+		} });
+		try {
+			assert(/^[0-9a-f]{64}$/.test(await hashSubmission(submission, 'sha256:runtime')));
+		} finally {
+			Object.defineProperty(fs, 'readFileSync', { configurable: true, value: originalReadFileSync });
+		}
+		await assert.rejects(
+			hashSubmission(submission, 'sha256:runtime', { maxBytes: 1024, maxFiles: 10 }),
+			/exceeds the 1024-byte total size limit/
+		);
+		fs.writeFileSync(path.join(submission, 'second.bin'), 'x');
+		await assert.rejects(
+			hashSubmission(submission, 'sha256:runtime', { maxBytes: 16 * 1024 * 1024, maxFiles: 1 }),
+			/exceeds the 1-file limit/
+		);
+	});
+
+	it('accepts only exact registry pins in bounded requirements files', () => {
+		const requirements = path.join(temporaryRoot, 'requirements.txt');
+		fs.writeFileSync(requirements, 'six==1.17.0\nrequests[security]==2.32.3 # exact wheel\n');
+		validateRequirementsFile(requirements);
+		for (const unsupported of [
+			'-e .\n', '.\n', 'git+https://example.test/repository.git\n',
+			'package @ https://example.test/package.whl\n', '--extra-index-url https://example.test/simple\n',
+			'package>=1.0\n', 'package==1.0; python_version > "3"\n',
+		]) {
+			fs.writeFileSync(requirements, unsupported);
+			assert.throws(() => validateRequirementsFile(requirements), /Unsupported requirements\.txt entry/);
+		}
 	});
 
 	it('rejects participant Dockerfiles before contacting Docker', async () => {
@@ -121,6 +169,7 @@ describe('Tournament Docker sandbox integration', function () {
 			await worker.start();
 			const inspected = JSON.parse((await runDocker(['container', 'inspect', worker.containerID])).stdout)[0];
 			assert.equal(inspected.HostConfig.NetworkMode, 'none');
+			assert.equal(inspected.HostConfig.IpcMode, 'none');
 			assert.equal(inspected.HostConfig.ReadonlyRootfs, true);
 			assert.equal(inspected.Config.User, '10001:10001');
 			assert.equal(inspected.HostConfig.Memory, 512 * 1024 * 1024);
@@ -143,6 +192,7 @@ describe('Tournament Docker sandbox integration', function () {
 			assert.equal(report.root_write, false);
 			assert.equal(report.submission_write, false);
 			assert.equal(report.tmp_write, true);
+			assert.equal(report.dev_shm_write, false);
 			assert.equal(report.network, false);
 			assert.equal(report.host_secret, null);
 			assert.deepEqual(report.environment.sort(), [...PROCESS_ENVIRONMENT_ALLOWLIST].sort());
@@ -153,14 +203,19 @@ describe('Tournament Docker sandbox integration', function () {
 		assert.deepEqual(new Set(await managedContainerIDs()), baselineContainers);
 	});
 
-	it('installs optional requirements.txt during controlled image preparation', async () => {
+	it('installs wheel-only requirements without importing a participant pip.py during preparation', async () => {
 		const directory = makeSubmission(temporaryRoot, 'Dependency Bot', [
+			'import os',
 			'import six',
 			'def choose_action(state):',
 			'    assert six.text_type("dependency-ready") == "dependency-ready"',
+			'    assert not os.path.exists("/submission/pip-shadowed")',
 			'    return state["request"]["legal_actions"][0]',
 			'',
-		].join('\n'), { 'requirements.txt': 'six==1.17.0\n' });
+		].join('\n'), {
+			'requirements.txt': 'six==1.17.0\n',
+			'pip.py': 'from pathlib import Path\nPath("/submission/pip-shadowed").write_text("unsafe")\n',
+		});
 		const prepared = await preparer.prepare(loadSubmission(directory, { format: DEFAULT_FORMAT }));
 		const cached = await preparer.prepare(loadSubmission(directory, { format: DEFAULT_FORMAT }));
 		assert.equal(cached.cached, true);
@@ -226,6 +281,7 @@ describe('Tournament Docker sandbox integration', function () {
 		const metadata = JSON.parse(fs.readFileSync(path.join(output, 'metadata.json'), 'utf8'));
 		assert.equal(metadata.schema_version, 2);
 		assert.equal(metadata.runtime.participants.p1.kind, 'docker');
+		assert.equal(metadata.runtime.participants.p1.ipc, 'none');
 		assert(/^sha256:/.test(metadata.runtime.participants.p1.participant_image_id));
 		const replay = loadReplayArtifacts(output);
 		assert(replay.protocol.includes('|turn|1'));
@@ -314,6 +370,7 @@ function isolationBot() {
 		'        "root_write": attempt_write("/forbidden.txt"),',
 		'        "submission_write": attempt_write("/submission/forbidden.txt"),',
 		'        "tmp_write": attempt_write("/tmp/allowed.txt"),',
+		'        "dev_shm_write": attempt_write("/dev/shm/forbidden.txt"),',
 		'        "network": connected,',
 		'        "host_secret": os.environ.get("TOURNAMENT_HOST_SECRET_FOR_TEST"),',
 		'        "environment": sorted(os.environ),',
