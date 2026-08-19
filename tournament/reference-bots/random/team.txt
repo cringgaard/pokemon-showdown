@@ -1,0 +1,59 @@
+Incineroar @ Sitrus Berry
+Ability: Intimidate
+Level: 50
+EVs: 252 HP / 4 Atk / 252 SpD
+Tera Type: Grass
+- Fake Out
+- Flare Blitz
+- Knock Off
+- Protect
+
+Rillaboom @ Assault Vest
+Ability: Grassy Surge
+Level: 50
+EVs: 252 HP / 252 Atk / 4 SpD
+Tera Type: Fire
+- Grassy Glide
+- Wood Hammer
+- U-turn
+- Fake Out
+
+Urshifu-Rapid-Strike @ Mystic Water
+Ability: Unseen Fist
+Level: 50
+EVs: 4 HP / 252 Atk / 252 Spe
+Tera Type: Water
+- Surging Strikes
+- Close Combat
+- Aqua Jet
+- Detect
+
+Flutter Mane @ Booster Energy
+Ability: Protosynthesis
+Level: 50
+EVs: 4 HP / 252 SpA / 252 Spe
+Tera Type: Fairy
+- Moonblast
+- Shadow Ball
+- Dazzling Gleam
+- Protect
+
+Miraidon @ Choice Specs
+Ability: Hadron Engine
+Level: 50
+EVs: 4 HP / 252 SpA / 252 Spe
+Tera Type: Electric
+- Electro Drift
+- Draco Meteor
+- Volt Switch
+- Dazzling Gleam
+
+Calyrex-Shadow @ Life Orb
+Ability: As One (Spectrier)
+Level: 50
+EVs: 4 HP / 252 SpA / 252 Spe
+Tera Type: Ghost
+- Astral Barrage
+- Psychic
+- Draining Kiss
+- Protect

@@ -2,20 +2,20 @@ import { execFileSync } from 'child_process';
 import * as path from 'path';
 import type { ObjectReadWriteStream } from '../../lib/streams';
 import { BattleStream, getPlayerStreams } from '../../sim/battle-stream';
-import { Dex } from '../../sim/dex';
 import type { PRNGSeed } from '../../sim/prng';
 import type { ChoiceRequest } from '../../sim/side';
-import { Teams } from '../../sim/teams';
-import { TeamValidator } from '../../sim/team-validator';
 import type { BotState, RuntimeInfo } from '../api/types';
 import { adaptAction } from '../actions/action-adapter';
 import { BotController, type RuntimeLogEntry, type RuntimeStats } from '../bots/runtime';
 import { buildBotState } from '../state/state-builder';
 import { StateTracker } from '../state/state-tracker';
+import { validateTeamExport } from '../submissions/submission-loader';
+import { prepareMatchArtifactDirectory, writeMatchArtifacts } from './artifacts';
 
 export const DEFAULT_FORMAT = 'gen9vgc2025regi@@@!openteamsheets,forceopenteamsheets';
 
 export interface ParticipantSpec {
+	id?: string;
 	name: string;
 	bot: string;
 	team: string;
@@ -30,6 +30,7 @@ export interface MatchOptions {
 	maxInvalidAttempts?: number;
 	matchTimeoutMs?: number;
 	python?: string;
+	outputDirectory?: string;
 }
 
 export interface PlayerMatchResult {
@@ -62,18 +63,18 @@ export class MatchRunner {
 
 	constructor(options: MatchOptions) {
 		this.options = {
+			...options,
 			decisionTimeoutMs: options.decisionTimeoutMs ?? 5000,
 			maxInvalidAttempts: options.maxInvalidAttempts ?? 3,
 			matchTimeoutMs: options.matchTimeoutMs ?? 60_000,
-			...options,
 		};
 	}
 
 	async run(): Promise<MatchResult> {
-		Dex.includeData();
 		const format = this.options.format || DEFAULT_FORMAT;
 		const p1 = validateParticipant(this.options.p1, format);
 		const p2 = validateParticipant(this.options.p2, format);
+		if (this.options.outputDirectory) prepareMatchArtifactDirectory(this.options.outputDirectory);
 		const battleStream = new BattleStream({ noCatch: true });
 		const streams = getPlayerStreams(battleStream);
 		const p1Runtime = new MatchPlayerRuntime('p1', streams.p1, p1, format, this.options);
@@ -113,7 +114,7 @@ export class MatchRunner {
 			if (!battleStream.atEOF) await streams.omniscient.writeEnd();
 		}
 
-		return {
+		const result: MatchResult = {
 			format,
 			seed: this.options.seed,
 			winner,
@@ -124,6 +125,10 @@ export class MatchRunner {
 			authoritative_log: authoritativeLog,
 			players: { p1: p1Runtime.result(), p2: p2Runtime.result() },
 		};
+		if (this.options.outputDirectory) {
+			writeMatchArtifacts(this.options.outputDirectory, result, { p1, p2 }, this.options);
+		}
+		return result;
 	}
 }
 
@@ -228,11 +233,8 @@ class MatchPlayerRuntime {
 }
 
 function validateParticipant(participant: ParticipantSpec, format: string): ValidatedParticipant {
-	const team = Teams.import(participant.team);
-	if (!team) throw new Error(`${participant.name}'s team could not be parsed`);
-	const problems = TeamValidator.get(format).validateTeam(team);
-	if (problems?.length) throw new Error(`${participant.name}'s team is invalid:\n${problems.join('\n')}`);
-	return { ...participant, packedTeam: Teams.pack(team) };
+	const packedTeam = validateTeamExport(participant.team, format, participant.name).packedTeam;
+	return { ...participant, packedTeam };
 }
 
 function currentCommit() {
