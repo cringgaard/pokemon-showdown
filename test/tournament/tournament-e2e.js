@@ -75,6 +75,10 @@ describe('Tournament four-participant end to end', function () {
 			assert.equal(reloaded.state.champion, result.champion);
 			assert.equal(reloaded.state.completed_games.length, state.completed_games.length);
 			assert.equal(events.presentation.kind, 'champion');
+			assert.deepEqual(
+				[events.presentation.p1.name, events.presentation.p2.name].sort(),
+				state.finalists.map(id => config.config.participants.find(participant => participant.id === id).name).sort()
+			);
 		} finally {
 			fs.rmSync(temporaryRoot, { recursive: true, force: true });
 		}

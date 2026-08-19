@@ -134,7 +134,7 @@ export class TournamentOrchestrator {
 		this.stateStore.state.in_progress = { game, attempt, artifact_directory: artifactDirectory };
 		this.stateStore.save();
 		const live = this.matchState('live', game, gameNumber, score);
-		this.eventStore.publishPresentation(live, true);
+		this.eventStore.publishPresentation(live);
 		const result = await this.executeMatch({
 			format: this.config.config.format,
 			seed: game.seed,
@@ -302,6 +302,8 @@ export class TournamentOrchestrator {
 		const champion: TournamentPresentationState = {
 			...this.common('champion'),
 			stage_label: 'Tournament Champion',
+			p1: this.displayParticipant(finalists[0]),
+			p2: this.displayParticipant(finalists[1]),
 			winner: this.displayParticipant(championID),
 			series_score: finalScore,
 			champion_reason: this.stateStore.state.champion_reason || undefined,

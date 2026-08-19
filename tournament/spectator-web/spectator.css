@@ -39,9 +39,9 @@ body:not([data-state="live"]) .live-matchup, body:not([data-state="live"]) #turn
 .series-score { min-height: 1.5em; margin-top: 5vh; color: var(--gold); text-align: center; font-size: clamp(1.4rem, 2.2vw, 2.5rem); font-weight: 900; letter-spacing: .04em; }
 .battle-screen { padding: 18px 5vw 28px; flex-direction: column; align-items: center; }
 .battle-frame { width: min(1420px, 92vw); flex: 1; display: flex; align-items: center; justify-content: center; min-height: 0; }
-.wrapper { width: 100%; overflow: hidden; border: 1px solid #69baff66; border-radius: 18px; background: #eceff3; box-shadow: 0 28px 90px #000a; }
+.wrapper { --battle-scale: 1; width: min(1420px, 92vw, calc((100vh - 190px) * 16 / 9)); height: auto !important; aspect-ratio: 16 / 9; position: relative; overflow: hidden; border: 1px solid #69baff66; border-radius: 18px; background: #eceff3; box-shadow: 0 28px 90px #000a; }
 .battle-screen .battle-log, .battle-screen .replay-controls, .battle-screen .replay-controls-2 { display: none !important; }
-.battle-screen .battle { margin: 0 auto !important; }
+.battle-screen .battle { position: absolute !important; inset: 0 auto auto 0 !important; margin: 0 !important; transform: scale(var(--battle-scale)) !important; transform-origin: top left !important; }
 .live-score { margin: 8px 0 0; }
 .result-screen h1 { color: var(--gold); }
 .standings-screen { align-items: center; }

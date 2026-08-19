@@ -561,11 +561,13 @@ The final is best-of-N and stops when a finalist reaches `floor(N / 2) + 1` wins
 
 The output layout contains `tournament.json`, atomic `state.json`, `event.log.jsonl`, and ordinary per-attempt match directories under `matches/<stage>/<pairing>/<game>/attempt-N/`. State and manifest use schema version 1 and carry the normalized-config SHA-256. A mismatched config fails closed. An in-progress attempt whose ordinary `metadata.json`, `result.json`, and `battle.protocol.log` are complete is adopted on restart; a partial attempt is retained for audit and a new attempt directory is used. Completed games are validated and never rerun.
 
+`event.log.jsonl` is explicitly non-authoritative, output-only presentation history. Matchup intro events persist `reset_protocol` and an incremented `protocol_generation`; every later presentation/protocol event for that game carries the same generation. This lets restart reconstruct an empty next-game renderer while paused on an intro and lets browsers replace the official renderer exactly at game boundaries. Invalid/partial log tails recover to their contiguous valid prefix. A spectator-log write failure disables persistence for that process but does not stop in-memory delivery, match execution, or resume from `state.json` and ordinary match artifacts.
+
 Tournament presentation events and canonical battle protocol are separate typed event kinds. The durable event store reconstructs the current presentation plus current-game protocol for browser refresh/late join. It is only a `SpectatorSink` to `MatchRunner`; tournament title, stage, standings, series score, and champion metadata never enter `BotState`. Event append/listener/browser failures are failure-isolated output paths.
 
 ### 19.4 Presentation and operation
 
-The 16:9 event shell implements idle/title, matchup intro, live battle, result, standings/next-match, and champion states. Live and saved matches use the same official Showdown `replay-embed.js` adapter. The official renderer remains visually dominant and tournament CSS hides developer-oriented logs and controls during presentation.
+The 16:9 event shell implements idle/title, matchup intro, live battle, result, standings/next-match, and champion states. Live and saved matches use the same official Showdown `replay-embed.js` adapter. The official renderer remains visually dominant: the shell scales its native 640x360 battle viewport uniformly into the available 16:9 event frame while tournament CSS hides developer-oriented logs and controls during presentation.
 
 Manual operation is the default. The localhost `/operator` surface can advance between states, temporarily show standings, and return to the current intro/interstitial. It never pauses an active Showdown battle. `--auto-advance` is provided for tests and rehearsals.
 

@@ -9,6 +9,9 @@ const { TournamentPacingController } = require('../../dist/tournament/orchestrat
 const { TournamentEventServer } = require('../../dist/tournament/spectator/event-server');
 const { TournamentEventStore } = require('../../dist/tournament/spectator/event-store');
 const { renderViewerHTML } = require('../../dist/tournament/spectator/server');
+const {
+	battleScale, protocolGeneration, rendererNeedsReload,
+} = require('../../tournament/spectator-web/spectator');
 
 describe('Tournament event reconstruction and presentation shell', function () {
 	this.timeout(10_000);
@@ -38,6 +41,97 @@ describe('Tournament event reconstruction and presentation shell', function () {
 		assert.equal(restored.presentation.winner.name, 'Alice');
 		assert.equal(restored.protocol(), '|start\n|turn|1');
 		assert.deepEqual(restored.events.map(event => event.sequence), [1, 2, 3, 4, 5]);
+	});
+
+	it('persists a fresh protocol generation while waiting on the next-game intro', () => {
+		const filename = path.join(temporaryRoot, 'event.log.jsonl');
+		const idle = presentation('idle');
+		const store = new TournamentEventStore(idle, filename);
+		store.publishPresentation({ ...presentation('intro'), game_id: 'game-1' }, true);
+		store.publishPresentation({ ...presentation('live'), game_id: 'game-1' });
+		store.publish('|start\n|turn|1');
+		store.publishPresentation({ ...presentation('result'), game_id: 'game-1' });
+		store.publishPresentation({ ...presentation('standings'), game_id: 'game-1' });
+
+		const refreshedBetweenGames = new TournamentEventStore(idle, filename);
+		assert.equal(refreshedBetweenGames.presentation.kind, 'standings');
+		assert.equal(refreshedBetweenGames.presentation.protocol_generation, 1);
+		assert.equal(refreshedBetweenGames.protocol(), '|start\n|turn|1');
+
+		store.publishPresentation({ ...presentation('intro'), game_id: 'game-2' }, true);
+		const restartedOnIntro = new TournamentEventStore(idle, filename);
+		assert.equal(restartedOnIntro.presentation.kind, 'intro');
+		assert.equal(restartedOnIntro.presentation.game_id, 'game-2');
+		assert.equal(restartedOnIntro.presentation.protocol_generation, 2);
+		assert.equal(restartedOnIntro.protocol(), '');
+		store.publishPresentation({ ...presentation('live'), game_id: 'game-2' });
+		store.publish('|start\n|turn|1');
+		const restartedLive = new TournamentEventStore(idle, filename);
+		assert.equal(restartedLive.presentation.protocol_generation, 2);
+		assert.equal(restartedLive.protocol(), '|start\n|turn|1');
+	});
+
+	it('reloads the renderer for the exact live-result-standings-refresh-intro-live game boundary', () => {
+		const game1 = { ...presentation('live'), game_id: 'game-1', protocol_generation: 1 };
+		const result1 = { ...presentation('result'), game_id: 'game-1', protocol_generation: 1 };
+		const standings1 = { ...presentation('standings'), game_id: 'game-1', protocol_generation: 1 };
+		const intro2 = { ...presentation('intro'), game_id: 'game-2', protocol_generation: 2 };
+		const live2 = { ...presentation('live'), game_id: 'game-2', protocol_generation: 2 };
+		let rendererGeneration = protocolGeneration(game1);
+		assert.equal(rendererNeedsReload(rendererGeneration, result1), false);
+		assert.equal(rendererNeedsReload(rendererGeneration, standings1), false);
+		rendererGeneration = protocolGeneration(standings1); // Browser refresh between games.
+		assert.equal(rendererNeedsReload(rendererGeneration, intro2), true);
+		rendererGeneration = protocolGeneration(intro2); // Reloaded official renderer with empty game-2 protocol.
+		assert.equal(rendererNeedsReload(rendererGeneration, live2), false);
+	});
+
+	it('scales the native official 640px battle renderer to the event frame', () => {
+		assert.equal(battleScale(640), 1);
+		assert.equal(battleScale(1420), 2.21875);
+	});
+
+	it('recovers a corrupt spectator log to its valid prefix and continues durably', () => {
+		const filename = path.join(temporaryRoot, 'event.log.jsonl');
+		const idle = presentation('idle');
+		const store = new TournamentEventStore(idle, filename);
+		store.publishPresentation({ ...presentation('intro'), game_id: 'game-1' }, true);
+		fs.appendFileSync(filename, '{"sequence":3,"kind":"presentation"');
+
+		const recovered = new TournamentEventStore(idle, filename);
+		assert.equal(recovered.events.length, 2);
+		assert.equal(recovered.presentation.kind, 'intro');
+		assert(recovered.deliveryErrors.some(error => error.includes('Recovered tournament spectator event history')));
+		recovered.publishPresentation({ ...presentation('live'), game_id: 'game-1' });
+		const reloaded = new TournamentEventStore(idle, filename);
+		assert.deepEqual(reloaded.events.map(event => event.sequence), [1, 2, 3]);
+		assert.equal(reloaded.presentation.kind, 'live');
+	});
+
+	it('keeps tournament-facing event delivery alive after spectator-log persistence fails', () => {
+		const filename = path.join(temporaryRoot, 'event.log.jsonl');
+		const idle = presentation('idle');
+		const store = new TournamentEventStore(idle, filename);
+		const originalAppendFileSync = fs.appendFileSync;
+		Object.defineProperty(fs, 'appendFileSync', {
+			configurable: true,
+			value: () => { throw new Error('simulated spectator disk failure'); },
+		});
+		try {
+			store.publishPresentation({ ...presentation('intro'), game_id: 'game-1' }, true);
+			store.publish('|start');
+		} finally {
+			Object.defineProperty(fs, 'appendFileSync', { configurable: true, value: originalAppendFileSync });
+		}
+		assert.equal(store.presentation.kind, 'intro');
+		assert.equal(store.protocol(), '|start');
+		assert.deepEqual(store.events.map(event => event.sequence), [1, 2, 3]);
+		assert(store.deliveryErrors.some(error => error.includes('simulated spectator disk failure')));
+
+		const resumed = new TournamentEventStore(idle, filename);
+		assert.deepEqual(resumed.events.map(event => event.sequence), [1]);
+		resumed.publishPresentation({ ...presentation('intro'), game_id: 'game-1' }, true);
+		assert.deepEqual(new TournamentEventStore(idle, filename).events.map(event => event.sequence), [1, 2]);
 	});
 
 	it('serves retained history followed by live continuation without duplication', async () => {

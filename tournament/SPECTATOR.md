@@ -64,13 +64,17 @@ results/company-cup/
 
 Every game directory is a normal existing `MatchRunner` artifact set with `metadata.json`, `result.json`, `battle.protocol.log`, runtime logs, and bot-state snapshots. `state.json` is written atomically and is validated against the normalized-config hash on every start.
 
-The event log retains presentation transitions and current-game protocol in order. A refreshed or late-joining browser receives a current HTML snapshot containing the complete current battle protocol, then continues from the next SSE sequence without duplication. A disconnect shows a subtle reconnecting status and cannot backpressure or stop tournament execution.
+The event log retains presentation transitions and current-game protocol in order. Every matchup intro starts a new, durable `protocol_generation`; the live state for that game retains it. A browser reloads the official renderer whenever this generation changes, including after a refresh on a result or standings screen, so one renderer instance can never receive two games' protocol.
+
+A refreshed or late-joining browser receives a current HTML snapshot containing only the current generation's complete battle protocol, then continues from the next SSE sequence without duplication. A disconnect shows a subtle reconnecting status and cannot backpressure or stop tournament execution. The event log is output-only: an invalid or partial tail is truncated to its valid prefix, and a write failure disables further event-log persistence for that process while in-memory presentation continues. Such degradation is reported in spectator delivery errors and never invalidates authoritative `state.json` or ordinary match artifacts.
 
 ## Official renderer dependency decision
 
 Both completed replays and live/event battles use Pokémon Showdown's official hosted `replay-embed.js`. The embed declares MIT licensing and a supported third-party protocol boundary, and supplies the official `Battle`, `BattleScene`, sprites, moves, HP/status, switches, weather/terrain, Tera, fainting, and replay behavior.
 
 The larger client repository is AGPLv3 and omits important sprite/audio assets from source control. This MIT server repository therefore does not vendor an ambiguously licensed/incomplete client build. Internet access to `play.pokemonshowdown.com` is an explicit event dependency, enforced by preflight.
+
+For a venue display, use a 1920x1080 browser viewport in fullscreen or kiosk mode. The shell uniformly scales the official renderer's native 640x360 battle viewport into the available 16:9 battle frame; it does not replace or redraw Showdown battle content. Before doors open, walk the operator flow through title, intro, live battle, result, standings, final, and champion, and refresh once during a live game and once on a between-game screen.
 
 ## Single-match replay compatibility
 

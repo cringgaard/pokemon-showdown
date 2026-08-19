@@ -2,7 +2,26 @@
 
 /* global document, EventSource, location, Replays, window */
 
+function protocolGeneration(presentation) {
+	const generation = presentation?.protocol_generation;
+	return Number.isSafeInteger(generation) && generation >= 0 ? generation : null;
+}
+
+function rendererNeedsReload(currentGeneration, presentation) {
+	const nextGeneration = protocolGeneration(presentation);
+	return nextGeneration !== null && currentGeneration !== null && nextGeneration !== currentGeneration;
+}
+
+function battleScale(width) {
+	return Math.max(0.1, width / 640);
+}
+
+if (typeof module !== 'undefined' && module.exports) {
+	module.exports = { battleScale, protocolGeneration, rendererNeedsReload };
+}
+
 (function () {
+	if (typeof document === 'undefined') return;
 	const config = JSON.parse(document.getElementById('spectator-config').textContent);
 	const elements = Object.fromEntries([
 		'event-title', 'event-subtitle', 'p1-name', 'p2-name', 'stage-label', 'turn-label', 'connection-label',
@@ -12,7 +31,8 @@
 	].map(id => [id, document.getElementById(id)]));
 	let battle;
 	let sequence = config.sequence;
-	let rendererGameID = config.presentation?.kind === 'live' ? config.presentation.game_id || null : null;
+	let rendererGeneration = protocolGeneration(config.presentation);
+	let rendererGameID = config.presentation?.game_id || null;
 
 	function text(id, value) {
 		elements[id].textContent = value == null ? '' : String(value);
@@ -47,6 +67,12 @@
 			}
 			elements['standings-body'].appendChild(tr);
 		}
+	}
+
+	function sizeBattleRenderer() {
+		const wrapper = document.querySelector('.replay-wrapper');
+		if (!wrapper?.clientWidth) return;
+		wrapper.style.setProperty('--battle-scale', String(battleScale(wrapper.clientWidth)));
 	}
 
 	function updateShell() {
@@ -90,13 +116,17 @@
 
 	function acceptPresentation(presentation) {
 		const enteringLive = presentation.kind === 'live';
-		if (enteringLive && rendererGameID && presentation.game_id !== rendererGameID) {
+		if (rendererNeedsReload(rendererGeneration, presentation) || (
+			enteringLive && rendererGeneration === null && rendererGameID && presentation.game_id !== rendererGameID
+		)) {
 			location.reload();
 			return;
 		}
-		if (enteringLive) rendererGameID = presentation.game_id || rendererGameID;
+		rendererGeneration = protocolGeneration(presentation) ?? rendererGeneration;
+		if (presentation.game_id) rendererGameID = presentation.game_id;
 		config.presentation = presentation;
 		updateShell();
+		if (enteringLive) window.setTimeout(sizeBattleRenderer, 0);
 		if (enteringLive && battle?.paused) battle.play();
 	}
 
@@ -140,6 +170,7 @@
 			if (state === 'ended') void refreshState();
 		});
 		Replays.changeSetting('speed', 'fast');
+		sizeBattleRenderer();
 		updateShell();
 		if (config.presentation?.kind === 'live') battle.play();
 		if (config.mode !== 'replay') connect();
@@ -147,5 +178,6 @@
 	}
 
 	updateShell();
+	window.addEventListener('resize', sizeBattleRenderer);
 	window.addEventListener('load', attach);
 })();

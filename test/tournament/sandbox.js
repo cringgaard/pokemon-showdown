@@ -8,6 +8,9 @@ const assert = require('../assert');
 const { BotController } = require('../../dist/tournament/bots/runtime');
 const { loadReplayArtifacts } = require('../../dist/tournament/spectator/replay-loader');
 const { MatchRunner, DEFAULT_FORMAT } = require('../../dist/tournament/match/match-runner');
+const { loadTournamentConfig } = require('../../dist/tournament/orchestrator/config');
+const { TournamentOrchestrator } = require('../../dist/tournament/orchestrator/orchestrator');
+const { TournamentPacingController } = require('../../dist/tournament/orchestrator/pacing');
 const {
 	DockerImagePreparer, hashSubmission, participantDockerfile, runtimeDockerfile, validateRequirementsFile,
 } = require('../../dist/tournament/sandbox/image-preparer');
@@ -17,6 +20,7 @@ const {
 	PROCESS_ENVIRONMENT_ALLOWLIST,
 } = require('../../dist/tournament/sandbox/policy');
 const { managedContainerIDs } = require('../../dist/tournament/sandbox/runtime');
+const { TournamentEventStore } = require('../../dist/tournament/spectator/event-store');
 const { loadSubmission } = require('../../dist/tournament/submissions/submission-loader');
 
 const root = path.resolve(__dirname, '../..');
@@ -185,7 +189,9 @@ describe('Tournament Docker sandbox integration', function () {
 			assert.equal(inspected.HostConfig.LogConfig.Type, 'none');
 
 			assert.deepEqual(await worker.decide(1, 0, state(1), 2000), legalActions[0]);
-			const reportLine = worker.stderr.join('').split(/\r?\n/).find(line => line.startsWith('ISOLATION_REPORT='));
+			const reportLine = await waitForValue(() =>
+				worker.stderr.join('').split(/\r?\n/).find(line => line.startsWith('ISOLATION_REPORT='))
+			);
 			assert(reportLine);
 			const report = JSON.parse(reportLine.slice('ISOLATION_REPORT='.length));
 			assert.equal(report.asset, 'bundled-model-data');
@@ -288,6 +294,54 @@ describe('Tournament Docker sandbox integration', function () {
 		assert(replay.protocol.includes('|win|') || replay.protocol.includes('|tie'));
 		assert.deepEqual(new Set(await managedContainerIDs()), baselineContainers);
 	});
+
+	it('runs a complete deterministic tournament through ordinary Docker MatchRunner games', async () => {
+		const random = loadSubmission(path.join(root, 'tournament/reference-bots/random'), { format: DEFAULT_FORMAT });
+		const greedy = loadSubmission(path.join(root, 'tournament/reference-bots/greedy-damage'), { format: DEFAULT_FORMAT });
+		const [randomPrepared, greedyPrepared] = [await preparer.prepare(random), await preparer.prepare(greedy)];
+		const configPath = path.join(temporaryRoot, 'docker-tournament.json');
+		fs.writeFileSync(configPath, JSON.stringify({
+			title: 'Docker Acceptance Cup',
+			format: DEFAULT_FORMAT,
+			seed: 'docker-acceptance',
+			runtime: 'docker',
+			decision_timeout_ms: 2000,
+			match_timeout_ms: 30_000,
+			participants: [
+				{ id: random.id, name: random.name, submission: random.directory },
+				{ id: greedy.id, name: greedy.name, submission: greedy.directory },
+			],
+			round_robin: { games_per_pairing: 1 },
+			final: { qualifiers: 2, best_of: 1, max_tied_games: 2 },
+		}));
+		const config = loadTournamentConfig(configPath);
+		const output = path.join(temporaryRoot, 'docker-tournament');
+		const events = new TournamentEventStore({
+			schema_version: 1, kind: 'idle', title: config.config.title,
+		}, path.join(output, 'event.log.jsonl'));
+		const orchestrator = new TournamentOrchestrator({
+			config,
+			outputDirectory: output,
+			participants: new Map([
+				[random.id, { submission: random, workerFactory: randomPrepared.workerFactory }],
+				[greedy.id, { submission: greedy, workerFactory: greedyPrepared.workerFactory }],
+			]),
+			eventStore: events,
+			pacing: new TournamentPacingController(events, true),
+		});
+		const result = await orchestrator.run();
+		assert(result.champion);
+		assert.equal(orchestrator.stateStore.state.phase, 'complete');
+		assert(orchestrator.stateStore.state.completed_games.length >= 2);
+		for (const game of orchestrator.stateStore.state.completed_games) {
+			const metadata = JSON.parse(fs.readFileSync(path.join(game.artifact_directory, 'metadata.json'), 'utf8'));
+			assert.equal(metadata.runtime.participants.p1.kind, 'docker');
+			assert.equal(metadata.runtime.participants.p2.kind, 'docker');
+			assert(loadReplayArtifacts(game.artifact_directory).protocol.includes('|turn|1'));
+		}
+		assert.equal(events.presentation.kind, 'champion');
+		assert.deepEqual(new Set(await managedContainerIDs()), baselineContainers);
+	});
 });
 
 function option(args, name) {
@@ -339,6 +393,16 @@ function decide(controller, decisionID, timeoutMs) {
 		newDecision: true,
 		buildState: runtime => ({ ...state(decisionID), runtime }),
 	});
+}
+
+async function waitForValue(read, timeoutMs = 2000) {
+	const deadline = Date.now() + timeoutMs;
+	do {
+		const value = read();
+		if (value) return value;
+		await new Promise(resolve => { setTimeout(resolve, 10); });
+	} while (Date.now() < deadline);
+	return read();
 }
 
 function isolationBot() {
