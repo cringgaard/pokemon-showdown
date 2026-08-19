@@ -92,10 +92,9 @@ export class SpectatorServer {
 			'X-Accel-Buffering': 'no',
 		});
 		this.clients.add(response);
-		const headerSequence = Number(request.headers['last-event-id'] || 0);
-		const querySequence = Number(url.searchParams.get('after') || 0);
-		const after = Number.isSafeInteger(querySequence) && querySequence >= 0 ? querySequence :
-			Number.isSafeInteger(headerSequence) && headerSequence >= 0 ? headerSequence : 0;
+		const headerSequence = parseSequence(request.headers['last-event-id']);
+		const querySequence = parseSequence(url.searchParams.get('after'));
+		const after = headerSequence ?? querySequence ?? 0;
 		let active = true;
 		const writeEntry = (entry: StoredProtocolChunk) => {
 			if (!active || entry.sequence <= after) return;
@@ -180,6 +179,12 @@ function webAsset(filename: string) {
 
 function escapeScriptText(value: string) {
 	return value.replace(/<\//g, '<\\/');
+}
+
+function parseSequence(value: string | string[] | null | undefined) {
+	if (typeof value !== 'string' || !value) return null;
+	const sequence = Number(value);
+	return Number.isSafeInteger(sequence) && sequence >= 0 ? sequence : null;
 }
 
 function send(response: http.ServerResponse, status: number, body: string, contentType: string) {

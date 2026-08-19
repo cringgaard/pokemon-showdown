@@ -90,6 +90,14 @@ describe('Tournament spectator publication and transport', function () {
 		const refreshed = await openEvents(`${server.url()}events?after=0`, '"sequence":3');
 		assert(refreshed.text.indexOf('"sequence":1') < refreshed.text.indexOf('"sequence":3'));
 		refreshed.abort();
+
+		const reconnected = await openEvents(
+			`${server.url()}events?after=1`, '"sequence":3', undefined, { 'Last-Event-ID': '2' }
+		);
+		assert(!reconnected.text.includes('"sequence":1'));
+		assert(!reconnected.text.includes('"sequence":2'));
+		assert(reconnected.text.includes('"sequence":3'));
+		reconnected.abort();
 	});
 
 	it('disconnecting a live client does not stop publication', async () => {
@@ -105,9 +113,9 @@ describe('Tournament spectator publication and transport', function () {
 	});
 });
 
-async function openEvents(url, expected, afterOpen) {
+async function openEvents(url, expected, afterOpen, headers) {
 	const controller = new AbortController();
-	const responsePromise = fetch(url, { signal: controller.signal });
+	const responsePromise = fetch(url, { signal: controller.signal, headers });
 	if (afterOpen) setTimeout(afterOpen, 20);
 	const response = await responsePromise;
 	const reader = response.body.getReader();

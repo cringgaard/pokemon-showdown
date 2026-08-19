@@ -40,17 +40,22 @@ async function main(argv = process.argv.slice(2)) {
 		const p1 = loadSubmission(args.positionals[0], { format });
 		const p2 = loadSubmission(args.positionals[1], { format });
 		const spectatorPort = integerOption(args, 'spectator-port');
-		const spectatorStore = spectatorPort ? new ProtocolStore({
-			metadata: liveMetadata(format, p1, p2),
-		}) : null;
-		const spectatorServer = spectatorStore ? new SpectatorServer({
-			store: spectatorStore,
-			mode: 'live',
-			port: spectatorPort,
-		}) : null;
-		if (spectatorServer) {
-			await spectatorServer.listen();
-			process.stderr.write(`Live spectator: ${spectatorServer.url()}\n`);
+		let spectatorStore: ProtocolStore | null = null;
+		let spectatorServer: SpectatorServer | null = null;
+		if (spectatorPort) {
+			const store = new ProtocolStore({ metadata: liveMetadata(format, p1, p2) });
+			const server = new SpectatorServer({ store, mode: 'live', port: spectatorPort });
+			try {
+				await server.listen();
+				spectatorStore = store;
+				spectatorServer = server;
+				process.stderr.write(`Live spectator: ${server.url()}\n`);
+			} catch (error) {
+				process.stderr.write(
+					`Live spectator unavailable: ${error instanceof Error ? error.message : error}. ` +
+					`Continuing match without live spectator.\n`
+				);
+			}
 		}
 		try {
 			const result = await new MatchRunner({

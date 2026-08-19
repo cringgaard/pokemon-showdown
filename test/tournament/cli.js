@@ -2,6 +2,7 @@
 
 const { execFile } = require('child_process');
 const fs = require('fs');
+const net = require('net');
 const os = require('os');
 const path = require('path');
 const { promisify } = require('util');
@@ -97,5 +98,36 @@ describe('Tournament participant CLI', function () {
 			cli, 'match', p1, p2, '--output', output,
 		], { cwd: root }), error => /Participant names must be unique/.test(error.stderr));
 		assert.equal(fs.existsSync(output), false);
+	});
+
+	it('completes with normal artifacts when the live spectator port is unavailable', async () => {
+		const p1 = makeSubmission('Port Blocked One');
+		const p2 = makeSubmission('Port Blocked Two');
+		const output = path.join(temporaryRoot, 'spectator-unavailable-result');
+		const blocker = net.createServer();
+		await new Promise((resolve, reject) => {
+			blocker.once('error', reject);
+			blocker.listen(0, '127.0.0.1', resolve);
+		});
+		const address = blocker.address();
+		assert(address && typeof address === 'object');
+		try {
+			const completed = await execFileAsync(process.execPath, [
+				cli, 'match', p1, p2, '--seed', '4321', '--output', output,
+				'--spectator-port', String(address.port),
+				'--decision-timeout-ms', '1000', '--match-timeout-ms', '20000',
+			], { cwd: root, timeout: 30_000 });
+			const summary = JSON.parse(completed.stdout);
+			assert(summary.winner || summary.tie);
+			assert.match(completed.stderr, /Live spectator unavailable: .*EADDRINUSE/);
+			assert.match(completed.stderr, /Continuing match without live spectator/);
+			for (const filename of ['result.json', 'metadata.json', 'battle.protocol.log']) {
+				assert(fs.statSync(path.join(output, filename)).isFile(), filename);
+			}
+		} finally {
+			await new Promise((resolve, reject) => {
+				blocker.close(error => error ? reject(error) : resolve());
+			});
+		}
 	});
 });

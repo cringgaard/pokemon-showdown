@@ -44,6 +44,7 @@
 		});
 		events.addEventListener('protocol', event => {
 			const entry = JSON.parse(event.data);
+			if (entry.sequence <= sequence) return;
 			sequence = entry.sequence;
 			for (const line of entry.chunk.split('\n')) {
 				if (line) battle.add(line);
