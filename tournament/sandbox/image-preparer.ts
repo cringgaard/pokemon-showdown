@@ -57,7 +57,7 @@ export class DockerImagePreparer {
 				fs.writeFileSync(
 					path.join(context, 'Dockerfile'), participantDockerfile(runtimeImageID, !!submission.requirementsPath)
 				);
-				await runDocker(['image', 'build', '--file', 'Dockerfile', '--tag', tag, context], {
+				await runDocker(['image', 'build', '--tag', tag, context], {
 					timeoutMs: this.buildTimeoutMs,
 				});
 			} finally {
@@ -96,7 +96,7 @@ export class DockerImagePreparer {
 		try {
 			fs.writeFileSync(path.join(context, 'Dockerfile'), runtimeDockerfile(baseImageID));
 			fs.copyFileSync(findWorkerScript(), path.join(context, 'worker.py'));
-			await runDocker(['image', 'build', '--file', 'Dockerfile', '--tag', tag, context], {
+			await runDocker(['image', 'build', '--tag', tag, context], {
 				timeoutMs: this.buildTimeoutMs,
 			});
 		} finally {
