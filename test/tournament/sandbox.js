@@ -318,7 +318,7 @@ describe('Tournament Docker sandbox integration', function () {
 		const output = path.join(temporaryRoot, 'docker-tournament');
 		const events = new TournamentEventStore({
 			schema_version: 1, kind: 'idle', title: config.config.title,
-		}, path.join(output, 'event.log.jsonl'));
+		});
 		const orchestrator = new TournamentOrchestrator({
 			config,
 			outputDirectory: output,
