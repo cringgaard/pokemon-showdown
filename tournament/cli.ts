@@ -1,6 +1,10 @@
 import * as path from 'path';
 import type { PRNGSeed } from '../sim/prng';
+import { HostPythonWorkerFactory } from './bots/python-worker';
+import type { BotWorkerFactory } from './bots/worker-interface';
 import { DEFAULT_FORMAT, MatchRunner } from './match/match-runner';
+import { DockerImagePreparer } from './sandbox/image-preparer';
+import { DEFAULT_DOCKER_RESOURCE_POLICY, type DockerResourcePolicy } from './sandbox/policy';
 import { ProtocolStore } from './spectator/protocol-store';
 import { SpectatorServer, startReplayServer } from './spectator/server';
 import {
@@ -33,12 +37,27 @@ async function main(argv = process.argv.slice(2)) {
 		}
 		assertKnownOptions(args, [
 			'format', 'seed', 'output', 'decision-timeout-ms', 'max-invalid-attempts', 'match-timeout-ms',
-			'spectator-port',
+			'spectator-port', 'runtime', 'build-timeout-ms', 'container-memory-mb', 'container-cpus',
+			'container-pids', 'container-tmpfs-mb', 'container-nofile',
 		]);
 		const output = requiredOption(args, 'output');
 		const seed = parseSeed(args.options.get('seed') || '1,2,3,4');
 		const p1 = loadSubmission(args.positionals[0], { format });
 		const p2 = loadSubmission(args.positionals[1], { format });
+		const runtime = args.options.get('runtime') || 'docker';
+		if (runtime !== 'docker' && runtime !== 'host') throw new Error('--runtime must be either docker or host.');
+		let p1WorkerFactory: BotWorkerFactory;
+		let p2WorkerFactory: BotWorkerFactory;
+		if (runtime === 'docker') {
+			const preparer = dockerPreparer(args);
+			await preparer.assertAvailable();
+			p1WorkerFactory = (await preparer.prepare(p1)).workerFactory;
+			p2WorkerFactory = (await preparer.prepare(p2)).workerFactory;
+		} else {
+			process.stderr.write('WARNING: --runtime host executes trusted participant code directly on this machine without isolation.\n');
+			p1WorkerFactory = new HostPythonWorkerFactory();
+			p2WorkerFactory = new HostPythonWorkerFactory();
+		}
 		const spectatorPort = integerOption(args, 'spectator-port');
 		let spectatorStore: ProtocolStore | null = null;
 		let spectatorServer: SpectatorServer | null = null;
@@ -61,8 +80,8 @@ async function main(argv = process.argv.slice(2)) {
 			const result = await new MatchRunner({
 				format,
 				seed,
-				p1: participantSpec(p1),
-				p2: participantSpec(p2),
+				p1: participantSpec(p1, p1WorkerFactory),
+				p2: participantSpec(p2, p2WorkerFactory),
 				outputDirectory: output,
 				decisionTimeoutMs: integerOption(args, 'decision-timeout-ms'),
 				maxInvalidAttempts: integerOption(args, 'max-invalid-attempts'),
@@ -80,6 +99,7 @@ async function main(argv = process.argv.slice(2)) {
 				format: result.format,
 				seed: result.seed,
 				output: path.resolve(output),
+				runtime,
 			}, null, 2)}\n`);
 			if (spectatorServer) await new Promise(resolve => {
 				setTimeout(resolve, 1000);
@@ -87,6 +107,27 @@ async function main(argv = process.argv.slice(2)) {
 		} finally {
 			await spectatorServer?.close();
 		}
+		return;
+	}
+	if (command === 'prepare') {
+		if (args.positionals.length !== 1) throw new Error('prepare requires exactly one submission directory.\n\n' + usage());
+		assertKnownOptions(args, [
+			'format', 'build-timeout-ms', 'container-memory-mb', 'container-cpus', 'container-pids',
+			'container-tmpfs-mb', 'container-nofile',
+		]);
+		const submission = loadSubmission(args.positionals[0], { format });
+		const prepared = await dockerPreparer(args).prepare(submission);
+		process.stdout.write(`${JSON.stringify({
+			prepared: true,
+			id: submission.id,
+			name: submission.name,
+			content_hash: prepared.contentHash,
+			image_id: prepared.imageID,
+			runtime_image_id: prepared.runtimeImageID,
+			base_image_id: prepared.baseImageID,
+			cached: prepared.cached,
+			runtime: prepared.workerFactory.audit,
+		}, null, 2)}\n`);
 		return;
 	}
 	if (command === 'spectate') {
@@ -141,6 +182,28 @@ function integerOption(args: ParsedArguments, name: string) {
 	return parsed;
 }
 
+function numberOption(args: ParsedArguments, name: string) {
+	const value = args.options.get(name);
+	if (value === undefined) return undefined;
+	const parsed = Number(value);
+	if (!Number.isFinite(parsed) || parsed <= 0) throw new Error(`--${name} must be a positive number.`);
+	return parsed;
+}
+
+function dockerPreparer(args: ParsedArguments) {
+	const resourcePolicy: DockerResourcePolicy = {
+		memoryMB: integerOption(args, 'container-memory-mb') ?? DEFAULT_DOCKER_RESOURCE_POLICY.memoryMB,
+		cpus: numberOption(args, 'container-cpus') ?? DEFAULT_DOCKER_RESOURCE_POLICY.cpus,
+		pids: integerOption(args, 'container-pids') ?? DEFAULT_DOCKER_RESOURCE_POLICY.pids,
+		tmpfsMB: integerOption(args, 'container-tmpfs-mb') ?? DEFAULT_DOCKER_RESOURCE_POLICY.tmpfsMB,
+		nofile: integerOption(args, 'container-nofile') ?? DEFAULT_DOCKER_RESOURCE_POLICY.nofile,
+	};
+	return new DockerImagePreparer({
+		buildTimeoutMs: integerOption(args, 'build-timeout-ms'),
+		resourcePolicy,
+	});
+}
+
 function parseSeed(value: string): PRNGSeed {
 	if (/^\d+$/.test(value) && validGen5Words([value])) return `${value},0,0,0` as PRNGSeed;
 	if (/^(?:\d+,){3}\d+$/.test(value) && validGen5Words(value.split(','))) return value as PRNGSeed;
@@ -156,12 +219,13 @@ function validGen5Words(values: string[]) {
 	return values.every(value => Number(value) <= 0xFFFF);
 }
 
-function participantSpec(submission: LoadedSubmission) {
+function participantSpec(submission: LoadedSubmission, workerFactory: BotWorkerFactory) {
 	return {
 		id: submission.id,
 		name: submission.name,
 		bot: submission.mainPath,
 		team: submission.teamText,
+		workerFactory,
 	};
 }
 
@@ -211,16 +275,24 @@ function usage() {
 		'',
 		'Usage:',
 		'  node dist/tournament/cli.js validate SUBMISSION [--format FORMAT]',
+		'  node dist/tournament/cli.js prepare SUBMISSION [options]',
 		'  node dist/tournament/cli.js match P1_SUBMISSION P2_SUBMISSION --output DIRECTORY [options]',
 		'  node dist/tournament/cli.js spectate MATCH_DIRECTORY [--port PORT]',
 		'',
 		'Match options:',
+		'  --runtime docker|host           Docker isolation (default); host is trusted/unsafe',
 		'  --seed SEED                    Integer or Showdown seed (default: 1,2,3,4)',
 		'  --format FORMAT                Showdown format ID',
 		'  --decision-timeout-ms MS       Per-decision deadline',
 		'  --max-invalid-attempts COUNT   Invalid responses before fallback',
 		'  --match-timeout-ms MS          Whole-match safety timeout',
 		'  --spectator-port PORT          Serve a live read-only viewer during the match',
+		'  --build-timeout-ms MS          Participant image preparation timeout (default: 300000)',
+		'  --container-memory-mb MB       Memory and total memory+swap limit (default: 512)',
+		'  --container-cpus COUNT         CPU quota (default: 1)',
+		'  --container-pids COUNT         Process limit (default: 64)',
+		'  --container-tmpfs-mb MB        Writable /tmp limit (default: 64)',
+		'  --container-nofile COUNT       File descriptor soft/hard limit (default: 256)',
 		'',
 	].join('\n');
 }

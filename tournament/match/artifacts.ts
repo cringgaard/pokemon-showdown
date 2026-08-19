@@ -2,7 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import type { MatchOptions, MatchResult, ParticipantSpec, PlayerMatchResult } from './match-runner';
 
-export const MATCH_ARTIFACT_SCHEMA_VERSION = 1;
+export const MATCH_ARTIFACT_SCHEMA_VERSION = 2;
 
 export function prepareMatchArtifactDirectory(outputDirectory: string) {
 	const output = path.resolve(outputDirectory);
@@ -38,6 +38,10 @@ export function writeMatchArtifacts(
 			decision_timeout_ms: options.decisionTimeoutMs ?? 5000,
 			max_invalid_attempts: options.maxInvalidAttempts ?? 3,
 			match_timeout_ms: options.matchTimeoutMs ?? 60_000,
+			participants: {
+				p1: runtimeAudit(participants.p1),
+				p2: runtimeAudit(participants.p2),
+			},
 		},
 		artifacts: {
 			result: 'result.json',
@@ -68,6 +72,15 @@ export function writeMatchArtifacts(
 
 function publicParticipant(participant: ParticipantSpec) {
 	return { id: participant.id || participant.name, name: participant.name };
+}
+
+function runtimeAudit(participant: ParticipantSpec) {
+	return participant.workerFactory?.audit || {
+		kind: 'host',
+		trusted: true,
+		isolation: 'none',
+		warning: 'Trusted development mode; participant code ran directly on the host.',
+	};
 }
 
 function publicPlayerResult(player: PlayerMatchResult) {

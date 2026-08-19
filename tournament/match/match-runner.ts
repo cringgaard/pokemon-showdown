@@ -8,6 +8,7 @@ import type { ChoiceRequest } from '../../sim/side';
 import type { BotState, RuntimeInfo } from '../api/types';
 import { adaptAction } from '../actions/action-adapter';
 import { BotController, type RuntimeLogEntry, type RuntimeStats } from '../bots/runtime';
+import type { BotWorkerFactory } from '../bots/worker-interface';
 import { buildBotState } from '../state/state-builder';
 import { StateTracker } from '../state/state-tracker';
 import { validateTeamExport } from '../submissions/submission-loader';
@@ -23,6 +24,7 @@ export interface ParticipantSpec {
 	name: string;
 	bot: string;
 	team: string;
+	workerFactory?: BotWorkerFactory;
 }
 
 export interface MatchOptions {
@@ -106,9 +108,10 @@ export class MatchRunner {
 				}
 			}
 		})();
-		const players = Promise.all([p1Runtime.run(), p2Runtime.run(), observe]);
 		let matchTimer: NodeJS.Timeout | null = null;
 		try {
+			await Promise.all([p1Runtime.start(), p2Runtime.start()]);
+			const players = Promise.all([p1Runtime.run(), p2Runtime.run(), observe]);
 			await streams.omniscient.write(`>start ${JSON.stringify({ formatid: format, seed: this.options.seed })}\n` +
 				`>player p1 ${JSON.stringify({ name: p1.name, team: p1.packedTeam })}\n` +
 				`>player p2 ${JSON.stringify({ name: p2.name, team: p2.packedTeam })}`);
@@ -180,7 +183,12 @@ class MatchPlayerRuntime {
 			fallbackKey: `${options.seed}:${sideID}`,
 			decisionTimeoutMs: options.decisionTimeoutMs,
 			maxInvalidAttempts: options.maxInvalidAttempts,
+			workerFactory: participant.workerFactory,
 		});
+	}
+
+	async start() {
+		await this.controller.start();
 	}
 
 	async run() {
