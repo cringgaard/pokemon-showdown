@@ -1,0 +1,30 @@
+{
+  "title": "Pokemon Showdown Bot Tournament",
+  "subtitle": "Company Cup · VGC Regulation I",
+  "format": "gen9vgc2025regi@@@!openteamsheets,forceopenteamsheets",
+  "seed": "2026",
+  "runtime": "docker",
+  "decision_timeout_ms": 5000,
+  "max_invalid_attempts": 3,
+  "match_timeout_ms": 60000,
+  "participants": [
+    {
+      "id": "random",
+      "name": "Random Bot",
+      "submission": "reference-bots/random"
+    },
+    {
+      "id": "greedy-damage",
+      "name": "Greedy Damage Bot",
+      "submission": "reference-bots/greedy-damage"
+    }
+  ],
+  "round_robin": {
+    "games_per_pairing": 3
+  },
+  "final": {
+    "qualifiers": 2,
+    "best_of": 5,
+    "max_tied_games": 5
+  }
+}

@@ -68,3 +68,5 @@ or malicious package supply-chain compromise.
 
 Participant display names and machine IDs must be unique within a match. Result artifacts record the winning side
 and participant ID in addition to Showdown's display-name winner.
+
+To run a complete configured event, copy `tournament/tournament.example.json`, point each participant entry at its submission directory, then use the `preflight` and `tournament` commands documented in `tournament/SPECTATOR.md`. Paths in the event config are resolved relative to that config file.
