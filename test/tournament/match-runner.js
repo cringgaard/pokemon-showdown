@@ -79,6 +79,20 @@ describe('Tournament MatchRunner', function () {
 		assert.equal(result.players.p1.stats.invalid_responses, 0);
 	});
 
+	it('completes when a spectator sink fails on every published chunk', async () => {
+		const result = await new MatchRunner({
+			format: DEFAULT_FORMAT,
+			seed: '12,34,56,78',
+			decisionTimeoutMs: 1000,
+			matchTimeoutMs: 20_000,
+			p1: { name: 'Bot One', bot: randomBot, team },
+			p2: { name: 'Bot Two', bot: greedyBot, team },
+			spectatorSinks: [{ publish() { throw new Error('viewer unavailable'); } }],
+		}).run();
+		assert(result.winner || result.tie);
+		assert(result.authoritative_log.length > 0);
+	});
+
 	it('does not serialize hidden opponent values into either bot state', async () => {
 		const result = await runMatch(randomBot, randomBot, '11,22,33,44');
 		for (const player of Object.values(result.players)) {
