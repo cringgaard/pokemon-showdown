@@ -11,6 +11,9 @@ import { BotController, type RuntimeLogEntry, type RuntimeStats } from '../bots/
 import { buildBotState } from '../state/state-builder';
 import { StateTracker } from '../state/state-tracker';
 import { validateTeamExport } from '../submissions/submission-loader';
+import {
+	ProtocolRecorder, SpectatorPublisher, type SpectatorSink,
+} from '../spectator/spectator-publisher';
 import { prepareMatchArtifactDirectory, writeMatchArtifacts } from './artifacts';
 
 export const DEFAULT_FORMAT = 'gen9vgc2025regi@@@!openteamsheets,forceopenteamsheets';
@@ -32,6 +35,7 @@ export interface MatchOptions {
 	matchTimeoutMs?: number;
 	python?: string;
 	outputDirectory?: string;
+	spectatorSinks?: SpectatorSink[];
 }
 
 export interface PlayerMatchResult {
@@ -83,14 +87,18 @@ export class MatchRunner {
 		const streams = getPlayerStreams(battleStream);
 		const p1Runtime = new MatchPlayerRuntime('p1', streams.p1, p1, format, this.options);
 		const p2Runtime = new MatchPlayerRuntime('p2', streams.p2, p2, format, this.options);
-		const authoritativeLog: string[] = [];
+		const recorder = new ProtocolRecorder();
+		const spectatorPublisher = new SpectatorPublisher([
+			recorder,
+			...(this.options.spectatorSinks || []),
+		]);
 		let winner: string | null = null;
 		let tie = false;
 		let turns = 0;
 
 		const observe = (async () => {
 			for await (const chunk of streams.omniscient) {
-				authoritativeLog.push(chunk);
+				spectatorPublisher.publish(chunk);
 				for (const line of chunk.split('\n')) {
 					if (line.startsWith('|win|')) winner = line.slice(5);
 					if (line === '|tie') tie = true;
@@ -129,7 +137,7 @@ export class MatchRunner {
 			turns,
 			showdown_version: require(path.resolve(__dirname, '../../../package.json')).version,
 			showdown_commit: currentCommit(),
-			authoritative_log: authoritativeLog,
+			authoritative_log: recorder.chunks,
 			players: { p1: p1Runtime.result(), p2: p2Runtime.result() },
 		};
 		if (this.options.outputDirectory) {

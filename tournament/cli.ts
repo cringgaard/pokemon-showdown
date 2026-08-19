@@ -1,6 +1,8 @@
 import * as path from 'path';
 import type { PRNGSeed } from '../sim/prng';
 import { DEFAULT_FORMAT, MatchRunner } from './match/match-runner';
+import { ProtocolStore } from './spectator/protocol-store';
+import { SpectatorServer, startReplayServer } from './spectator/server';
 import {
 	loadSubmission, TOURNAMENT_TEAM_SIZE, type LoadedSubmission,
 } from './submissions/submission-loader';
@@ -31,31 +33,71 @@ async function main(argv = process.argv.slice(2)) {
 		}
 		assertKnownOptions(args, [
 			'format', 'seed', 'output', 'decision-timeout-ms', 'max-invalid-attempts', 'match-timeout-ms',
+			'spectator-port',
 		]);
 		const output = requiredOption(args, 'output');
 		const seed = parseSeed(args.options.get('seed') || '1,2,3,4');
 		const p1 = loadSubmission(args.positionals[0], { format });
 		const p2 = loadSubmission(args.positionals[1], { format });
-		const result = await new MatchRunner({
-			format,
-			seed,
-			p1: participantSpec(p1),
-			p2: participantSpec(p2),
-			outputDirectory: output,
-			decisionTimeoutMs: integerOption(args, 'decision-timeout-ms'),
-			maxInvalidAttempts: integerOption(args, 'max-invalid-attempts'),
-			matchTimeoutMs: integerOption(args, 'match-timeout-ms'),
-		}).run();
-		process.stdout.write(`${JSON.stringify({
-			winner: result.winner,
-			winner_side: result.winner_side,
-			winner_participant_id: result.winner_participant_id,
-			tie: result.tie,
-			turns: result.turns,
-			format: result.format,
-			seed: result.seed,
-			output: path.resolve(output),
-		}, null, 2)}\n`);
+		const spectatorPort = integerOption(args, 'spectator-port');
+		let spectatorStore: ProtocolStore | null = null;
+		let spectatorServer: SpectatorServer | null = null;
+		if (spectatorPort) {
+			const store = new ProtocolStore({ metadata: liveMetadata(format, p1, p2) });
+			const server = new SpectatorServer({ store, mode: 'live', port: spectatorPort });
+			try {
+				await server.listen();
+				spectatorStore = store;
+				spectatorServer = server;
+				process.stderr.write(`Live spectator: ${server.url()}\n`);
+			} catch (error) {
+				process.stderr.write(
+					`Live spectator unavailable: ${error instanceof Error ? error.message : error}. ` +
+					`Continuing match without live spectator.\n`
+				);
+			}
+		}
+		try {
+			const result = await new MatchRunner({
+				format,
+				seed,
+				p1: participantSpec(p1),
+				p2: participantSpec(p2),
+				outputDirectory: output,
+				decisionTimeoutMs: integerOption(args, 'decision-timeout-ms'),
+				maxInvalidAttempts: integerOption(args, 'max-invalid-attempts'),
+				matchTimeoutMs: integerOption(args, 'match-timeout-ms'),
+				spectatorSinks: spectatorStore ? [spectatorStore] : [],
+			}).run();
+			spectatorStore?.setResult(publicResult(result));
+			spectatorStore?.markComplete();
+			process.stdout.write(`${JSON.stringify({
+				winner: result.winner,
+				winner_side: result.winner_side,
+				winner_participant_id: result.winner_participant_id,
+				tie: result.tie,
+				turns: result.turns,
+				format: result.format,
+				seed: result.seed,
+				output: path.resolve(output),
+			}, null, 2)}\n`);
+			if (spectatorServer) await new Promise(resolve => {
+				setTimeout(resolve, 1000);
+			});
+		} finally {
+			await spectatorServer?.close();
+		}
+		return;
+	}
+	if (command === 'spectate') {
+		if (args.positionals.length !== 1) {
+			throw new Error('spectate requires exactly one completed match directory.\n\n' + usage());
+		}
+		assertKnownOptions(args, ['port']);
+		const server = await startReplayServer(args.positionals[0], { port: integerOption(args, 'port') ?? 8000 });
+		process.stdout.write(`Spectator replay: ${server.url()}\nPress Ctrl+C to stop.\n`);
+		await waitForSignal();
+		await server.close();
 		return;
 	}
 	throw new Error(`Unknown tournament command ${JSON.stringify(command)}.\n\n${usage()}`);
@@ -135,6 +177,34 @@ function validationSummary(submission: LoadedSubmission, format: string) {
 	};
 }
 
+function liveMetadata(format: string, p1: LoadedSubmission, p2: LoadedSubmission) {
+	return {
+		schema_version: 1,
+		format,
+		participants: {
+			p1: { id: p1.id, name: p1.name },
+			p2: { id: p2.id, name: p2.name },
+		},
+	};
+}
+
+function publicResult(result: Awaited<ReturnType<MatchRunner['run']>>) {
+	return {
+		winner: result.winner,
+		winner_side: result.winner_side,
+		winner_participant_id: result.winner_participant_id,
+		tie: result.tie,
+		turns: result.turns,
+	};
+}
+
+function waitForSignal() {
+	return new Promise<void>(resolve => {
+		process.once('SIGINT', () => resolve());
+		process.once('SIGTERM', () => resolve());
+	});
+}
+
 function usage() {
 	return [
 		'Pokemon Showdown tournament harness',
@@ -142,6 +212,7 @@ function usage() {
 		'Usage:',
 		'  node dist/tournament/cli.js validate SUBMISSION [--format FORMAT]',
 		'  node dist/tournament/cli.js match P1_SUBMISSION P2_SUBMISSION --output DIRECTORY [options]',
+		'  node dist/tournament/cli.js spectate MATCH_DIRECTORY [--port PORT]',
 		'',
 		'Match options:',
 		'  --seed SEED                    Integer or Showdown seed (default: 1,2,3,4)',
@@ -149,6 +220,7 @@ function usage() {
 		'  --decision-timeout-ms MS       Per-decision deadline',
 		'  --max-invalid-attempts COUNT   Invalid responses before fallback',
 		'  --match-timeout-ms MS          Whole-match safety timeout',
+		'  --spectator-port PORT          Serve a live read-only viewer during the match',
 		'',
 	].join('\n');
 }

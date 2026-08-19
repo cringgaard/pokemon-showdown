@@ -1,6 +1,6 @@
 # Pokémon Showdown Bot Tournament — VGC Bot Harness Design
 
-Status: living implementation specification. Milestone 1 is complete; this document now defines the preserved v1 contracts and the roadmap/constraints for participant submissions, spectator presentation, sandboxing, and tournament orchestration.
+Status: living implementation specification. Milestones 1 and 2A are complete; Milestone 2B is the current implementation milestone. This document defines the preserved v1 contracts and the roadmap/constraints for spectator presentation, sandboxing, and tournament orchestration.
 
 The tournament uses Pokémon Showdown as the authoritative battle simulator. Participant bots receive a stable semantic Python API built only from their player-visible information, while spectators may consume a separate one-way presentation stream.
 
@@ -41,11 +41,11 @@ Milestone 1 established:
 - RandomBot and GreedyDamageBot;
 - deterministic/replay-oriented logging and end-to-end tests.
 
-### Milestone 2A — participant submission loading and user-facing CLI — NEXT
+### Milestone 2A — participant submission loading and user-facing CLI — COMPLETE
 
 Implement real participant directories and preflight validation. The immediate goal is that two ordinary submission folders can be validated and run without editing tournament source code.
 
-### Milestone 2B — spectator proof of concept
+### Milestone 2B — spectator proof of concept — CURRENT
 
 Prove that a completed or live harness match can be rendered visually in a browser from the spectator stream/log. The frontend must remain read-only with respect to match execution.
 
@@ -398,7 +398,7 @@ Design one spectator event/log path that supports both:
 - **live mode**: ordered battle protocol chunks/events are broadcast to a browser as the match runs;
 - **replay mode**: the same stored protocol artifact is fed into the same rendering layer later.
 
-Live transport may be WebSocket or Server-Sent Events; choose the simplest implementation that preserves ordering and reconnect/replay practicality. The transport must not be coupled to simulator timing.
+Milestone 2B uses Server-Sent Events because the transport is one-way. A `ProtocolStore` retains the accumulated ordered chunks; a new or refreshed viewer receives history after its last sequence and then continues with newly published chunks. The server disconnects a response that signals backpressure instead of awaiting it. Transport remains uncoupled from simulator timing.
 
 ### 15.3 Viewer independence
 
@@ -416,7 +416,7 @@ The match runner may buffer/write spectator events, but it must not wait for ren
 
 ### 15.4 Rendering strategy
 
-Prefer reusing Pokémon Showdown's existing client battle rendering/protocol concepts where practical rather than implementing a second battle renderer or battle-state simulator.
+Milestone 2B reuses the official client's MIT-licensed replay/animation engine through Pokémon Showdown's hosted `replay-embed.js` third-party entrypoint. The local viewer provides the canonical Showdown protocol in the embed's documented `battle-log-data` boundary and wraps its official `Battle`/`BattleScene` presentation with tournament metadata. No client renderer source is copied into this MIT server repository, and tournament code does not interpret mechanics or draw battle sprites itself. This proof of concept therefore requires network access to the official hosted client assets while loading the viewer.
 
 Custom tournament UI should wrap the battle presentation rather than replace mechanics rendering. Later presentation may include:
 
@@ -620,7 +620,7 @@ Exact filenames may change where repository conventions suggest a cleaner organi
 
 Do not implement all remaining milestones in one pass.
 
-### Next session: Milestone 2A
+### Completed session: Milestone 2A
 
 1. Re-read this document and inspect the merged Milestone 1 implementation/tests before changing architecture.
 2. Add a submission abstraction/loader for participant directories.
@@ -632,7 +632,7 @@ Do not implement all remaining milestones in one pass.
 8. Run the tournament-focused tests, TypeScript/lint checks, and full repository verification.
 9. Open a focused PR for review.
 
-### Following session: Milestone 2B
+### Current session: Milestone 2B
 
 Research the existing Pokémon Showdown client/rendering path first, then implement the smallest browser spectator POC that can consume the saved/live spectator stream. Do not invent a parallel mechanics renderer.
 
