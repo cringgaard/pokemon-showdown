@@ -48,6 +48,8 @@ async function main(argv = process.argv.slice(2)) {
 		}).run();
 		process.stdout.write(`${JSON.stringify({
 			winner: result.winner,
+			winner_side: result.winner_side,
+			winner_participant_id: result.winner_participant_id,
 			tie: result.tie,
 			turns: result.turns,
 			format: result.format,

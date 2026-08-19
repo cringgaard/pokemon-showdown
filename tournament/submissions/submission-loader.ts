@@ -60,6 +60,7 @@ export function validateTeamExport(
 	teamText: string, format: string, participantName: string, expectedTeamSize = TOURNAMENT_TEAM_SIZE
 ): ValidatedTeam {
 	Dex.includeData();
+	assertHumanReadableExport(teamText, participantName);
 	let team;
 	try {
 		team = Teams.import(teamText);
@@ -92,6 +93,21 @@ export function validateTeamExport(
 		);
 	}
 	return { teamText, packedTeam: Teams.pack(team) };
+}
+
+function assertHumanReadableExport(teamText: string, participantName: string) {
+	const trimmed = teamText.trim();
+	const lines = trimmed.split(/\r?\n/);
+	if (trimmed.startsWith('[')) {
+		throw new SubmissionValidationError(
+			`${participantName}'s team.txt must use a human-readable Pokemon Showdown export; JSON teams are not accepted.`
+		);
+	}
+	if (lines.length === 1 && lines[0].includes('|')) {
+		throw new SubmissionValidationError(
+			`${participantName}'s team.txt must use a human-readable Pokemon Showdown export; packed teams are not accepted.`
+		);
+	}
 }
 
 function assertDirectory(directory: string) {

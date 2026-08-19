@@ -23,7 +23,7 @@ for correctness. Participant stdout is captured as runtime output; it cannot cor
 
 `team.txt` must be a human-readable Pokemon Showdown export containing exactly six Pokemon. Preflight uses
 Pokemon Showdown's `Teams.import` and `TeamValidator` for the configured format. Invalid teams are reported and are
-never repaired automatically.
+never repaired automatically. Packed and JSON team representations are rejected.
 
 Validate a submission:
 
@@ -44,3 +44,6 @@ invalid responses, enforces the shared decision deadline, and uses a determinist
 
 Participant dependencies are not installed and participant code is not sandboxed in Milestone 2A. Only run trusted
 submissions in this version.
+
+Participant display names and machine IDs must be unique within a match. Result artifacts record the winning side
+and participant ID in addition to Showdown's display-name winner.

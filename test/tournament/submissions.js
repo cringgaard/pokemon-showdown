@@ -4,6 +4,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const assert = require('../assert');
+const { Teams } = require('../../dist/sim/teams');
 const { DEFAULT_FORMAT } = require('../../dist/tournament/match/match-runner');
 const {
 	SubmissionValidationError, loadSubmission,
@@ -57,8 +58,20 @@ describe('Tournament participant submissions', () => {
 	});
 
 	it('reports a team import failure', () => {
-		assert.throws(() => loadSubmission(submission({ 'team.txt': 'not|a|packed|team' }), { format: DEFAULT_FORMAT }),
+		assert.throws(() => loadSubmission(submission({ 'team.txt': '' }), { format: DEFAULT_FORMAT }),
 			error => error instanceof SubmissionValidationError && /could not be imported/.test(error.message));
+	});
+
+	it('rejects packed team.txt input before Showdown import', () => {
+		const packed = Teams.pack(Teams.import(team));
+		assert.throws(() => loadSubmission(submission({ 'team.txt': packed }), { format: DEFAULT_FORMAT }),
+			error => error instanceof SubmissionValidationError && /packed teams are not accepted/.test(error.message));
+	});
+
+	it('rejects JSON team.txt input before Showdown import', () => {
+		const json = JSON.stringify(Teams.import(team));
+		assert.throws(() => loadSubmission(submission({ 'team.txt': json }), { format: DEFAULT_FORMAT }),
+			error => error instanceof SubmissionValidationError && /JSON teams are not accepted/.test(error.message));
 	});
 
 	it('reports the tournament team-size contract before starting a match', () => {

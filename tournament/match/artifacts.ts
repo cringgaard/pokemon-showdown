@@ -50,6 +50,8 @@ export function writeMatchArtifacts(
 	writeJSON(path.join(output, 'result.json'), {
 		schema_version: MATCH_ARTIFACT_SCHEMA_VERSION,
 		winner: result.winner,
+		winner_side: result.winner_side,
+		winner_participant_id: result.winner_participant_id,
 		tie: result.tie,
 		turns: result.turns,
 		players: {

@@ -25,9 +25,9 @@ describe('Tournament participant CLI', function () {
 		fs.rmSync(temporaryRoot, { recursive: true, force: true });
 	});
 
-	function makeSubmission(name) {
-		const directory = path.join(temporaryRoot, name);
-		fs.mkdirSync(directory);
+	function makeSubmission(name, parent = temporaryRoot) {
+		const directory = path.join(parent, name);
+		fs.mkdirSync(directory, { recursive: true });
 		fs.writeFileSync(path.join(directory, 'main.py'), bot);
 		fs.writeFileSync(path.join(directory, 'team.txt'), team);
 		return directory;
@@ -48,6 +48,9 @@ describe('Tournament participant CLI', function () {
 		], { cwd: root, timeout: 30_000 });
 		const summary = JSON.parse(completed.stdout);
 		assert(summary.winner || summary.tie);
+		assert(['p1', 'p2'].includes(summary.winner_side));
+		assert.equal(summary.winner_participant_id,
+			summary.winner_side === 'p1' ? 'alice-bot' : 'bob-bot');
 		assert.equal(summary.seed, '1234,0,0,0');
 
 		const expected = [
@@ -60,6 +63,8 @@ describe('Tournament participant CLI', function () {
 		assert.equal(metadata.schema_version, 1);
 		assert.equal(metadata.participants.p1.id, 'alice-bot');
 		assert.equal(result.schema_version, 1);
+		assert.equal(result.winner_side, summary.winner_side);
+		assert.equal(result.winner_participant_id, summary.winner_participant_id);
 		assert.deepEqual(result.players.p1.stats, {
 			decisions: result.players.p1.stats.decisions,
 			timeouts: 0,
@@ -82,5 +87,15 @@ describe('Tournament participant CLI', function () {
 				assert(!Object.hasOwn(pokemon, 'ivs'));
 			}
 		}
+	});
+
+	it('rejects two different submission directories with the same basename before battle', async () => {
+		const p1 = makeSubmission('submission', path.join(temporaryRoot, 'alice'));
+		const p2 = makeSubmission('submission', path.join(temporaryRoot, 'bob'));
+		const output = path.join(temporaryRoot, 'duplicate-result');
+		await assert.rejects(execFileAsync(process.execPath, [
+			cli, 'match', p1, p2, '--output', output,
+		], { cwd: root }), error => /Participant names must be unique/.test(error.stderr));
+		assert.equal(fs.existsSync(output), false);
 	});
 });

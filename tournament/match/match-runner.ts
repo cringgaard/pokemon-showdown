@@ -2,6 +2,7 @@ import { execFileSync } from 'child_process';
 import * as path from 'path';
 import type { ObjectReadWriteStream } from '../../lib/streams';
 import { BattleStream, getPlayerStreams } from '../../sim/battle-stream';
+import { toID } from '../../sim/dex-data';
 import type { PRNGSeed } from '../../sim/prng';
 import type { ChoiceRequest } from '../../sim/side';
 import type { BotState, RuntimeInfo } from '../api/types';
@@ -45,6 +46,8 @@ export interface MatchResult {
 	format: string;
 	seed: PRNGSeed;
 	winner: string | null;
+	winner_side: 'p1' | 'p2' | null;
+	winner_participant_id: string | null;
 	tie: boolean;
 	turns: number;
 	showdown_version: string;
@@ -74,6 +77,7 @@ export class MatchRunner {
 		const format = this.options.format || DEFAULT_FORMAT;
 		const p1 = validateParticipant(this.options.p1, format);
 		const p2 = validateParticipant(this.options.p2, format);
+		assertDistinctParticipants(p1, p2);
 		if (this.options.outputDirectory) prepareMatchArtifactDirectory(this.options.outputDirectory);
 		const battleStream = new BattleStream({ noCatch: true });
 		const streams = getPlayerStreams(battleStream);
@@ -114,10 +118,13 @@ export class MatchRunner {
 			if (!battleStream.atEOF) await streams.omniscient.writeEnd();
 		}
 
+		const winnerSide = winner === p1.name ? 'p1' : winner === p2.name ? 'p2' : null;
 		const result: MatchResult = {
 			format,
 			seed: this.options.seed,
 			winner,
+			winner_side: winnerSide,
+			winner_participant_id: winnerSide ? participantID(winnerSide === 'p1' ? p1 : p2) : null,
 			tie,
 			turns,
 			showdown_version: require(path.resolve(__dirname, '../../../package.json')).version,
@@ -235,6 +242,19 @@ class MatchPlayerRuntime {
 function validateParticipant(participant: ParticipantSpec, format: string): ValidatedParticipant {
 	const packedTeam = validateTeamExport(participant.team, format, participant.name).packedTeam;
 	return { ...participant, packedTeam };
+}
+
+function assertDistinctParticipants(p1: ParticipantSpec, p2: ParticipantSpec) {
+	if (toID(p1.name) === toID(p2.name)) {
+		throw new Error(`Participant names must be unique; both sides use ${JSON.stringify(p1.name)}.`);
+	}
+	if (participantID(p1) === participantID(p2)) {
+		throw new Error(`Participant IDs must be unique; both sides use ${JSON.stringify(participantID(p1))}.`);
+	}
+}
+
+export function participantID(participant: ParticipantSpec) {
+	return participant.id || participant.name;
 }
 
 function currentCommit() {
