@@ -44,8 +44,10 @@ export class DockerImagePreparer {
 	async prepare(submission: LoadedSubmission): Promise<PreparedParticipantImage> {
 		assertNoParticipantDockerfile(submission.directory);
 		await this.assertAvailable();
-		const baseImageID = await this.ensureBaseImage();
-		const runtimeImageID = await this.ensureTournamentRuntime(baseImageID);
+		const baseImage = await this.ensureBaseImage();
+		const runtimeImage = await this.ensureTournamentRuntime(baseImage.imageID, baseImage.reference);
+		const { imageID: baseImageID } = baseImage;
+		const { imageID: runtimeImageID } = runtimeImage;
 		const contentHash = hashSubmission(submission.directory, runtimeImageID);
 		const tag = `${IMAGE_NAMESPACE}/participant:${contentHash}`;
 		let imageID = await inspectImageID(tag);
@@ -55,7 +57,7 @@ export class DockerImagePreparer {
 			try {
 				copySubmission(submission.directory, path.join(context, 'submission'));
 				fs.writeFileSync(
-					path.join(context, 'Dockerfile'), participantDockerfile(runtimeImageID, !!submission.requirementsPath)
+					path.join(context, 'Dockerfile'), participantDockerfile(runtimeImage.reference, !!submission.requirementsPath)
 				);
 				await runDocker(['image', 'build', '--tag', tag, context], {
 					timeoutMs: this.buildTimeoutMs,
@@ -80,10 +82,12 @@ export class DockerImagePreparer {
 			imageID = await inspectImageID(PYTHON_BASE_IMAGE);
 		}
 		if (!imageID) throw new Error(`Unable to resolve immutable image ID for ${PYTHON_BASE_IMAGE}.`);
-		return imageID;
+		const reference = `${IMAGE_NAMESPACE}/python-base:${imageID.replace(/^sha256:/, '')}`;
+		await runDocker(['image', 'tag', imageID, reference], { timeoutMs: 10_000, maxOutputBytes: 256 * 1024 });
+		return { imageID, reference };
 	}
 
-	private async ensureTournamentRuntime(baseImageID: string) {
+	private async ensureTournamentRuntime(baseImageID: string, baseImageReference: string) {
 		const worker = fs.readFileSync(findWorkerScript());
 		const hash = createHash('sha256')
 			.update(`sandbox-policy:${SANDBOX_POLICY_VERSION}\0base:${baseImageID}\0`)
@@ -91,10 +95,10 @@ export class DockerImagePreparer {
 			.digest('hex');
 		const tag = `${IMAGE_NAMESPACE}/python-runtime:${hash}`;
 		let imageID = await inspectImageID(tag);
-		if (imageID) return imageID;
+		if (imageID) return { imageID, reference: tag };
 		const context = fs.mkdtempSync(path.join(os.tmpdir(), 'showdown-runtime-build-'));
 		try {
-			fs.writeFileSync(path.join(context, 'Dockerfile'), runtimeDockerfile(baseImageID));
+			fs.writeFileSync(path.join(context, 'Dockerfile'), runtimeDockerfile(baseImageReference));
 			fs.copyFileSync(findWorkerScript(), path.join(context, 'worker.py'));
 			await runDocker(['image', 'build', '--tag', tag, context], {
 				timeoutMs: this.buildTimeoutMs,
@@ -104,7 +108,7 @@ export class DockerImagePreparer {
 		}
 		imageID = await inspectImageID(tag);
 		if (!imageID) throw new Error(`Docker built ${tag} but its immutable image ID could not be inspected.`);
-		return imageID;
+		return { imageID, reference: tag };
 	}
 }
 

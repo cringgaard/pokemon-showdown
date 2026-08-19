@@ -47,7 +47,7 @@ describe('Tournament Docker sandbox policy construction', () => {
 		assert.deepEqual(option(args, '--cpus'), ['1']);
 		assert.deepEqual(option(args, '--pids-limit'), ['64']);
 		assert.deepEqual(option(args, '--ulimit'), ['nofile=256:256']);
-		assert.match(option(args, '--tmpfs')[0], /^\/tmp:.*size=64m/);
+		assert(/^\/tmp:.*size=64m/.test(option(args, '--tmpfs')[0]));
 		assert(args.includes('--init'));
 		assert.deepEqual(option(args, '--log-driver'), ['none']);
 		for (const forbidden of ['--privileged', '--volume', '-v', '--mount', '--device', '--pid', '--ipc', '--env', '-e']) {
@@ -68,11 +68,11 @@ describe('Tournament Docker sandbox policy construction', () => {
 		const first = hashSubmission(submission, 'sha256:runtime');
 		fs.writeFileSync(path.join(submission, 'model.bin'), 'model-v2');
 		assert.notEqual(hashSubmission(submission, 'sha256:runtime'), first);
-		assert.match(runtimeDockerfile('sha256:base'), /^FROM sha256:base/m);
+		assert(/^FROM sha256:base/m.test(runtimeDockerfile('sha256:base')));
 		const generated = participantDockerfile('sha256:runtime', true);
-		assert.match(generated, /^FROM sha256:runtime/m);
-		assert.match(generated, /COPY --chown=10001:10001 submission\/ \/submission\//);
-		assert.match(generated, /pip install .*requirements\.txt/);
+		assert(/^FROM sha256:runtime/m.test(generated));
+		assert(/COPY --chown=10001:10001 submission\/ \/submission\//.test(generated));
+		assert(/pip install .*requirements\.txt/.test(generated));
 		assert(!generated.includes('privileged'));
 	});
 
@@ -129,7 +129,7 @@ describe('Tournament Docker sandbox integration', function () {
 			assert.equal(inspected.HostConfig.PidsLimit, 64);
 			assert.deepEqual(inspected.HostConfig.CapDrop, ['ALL']);
 			assert(inspected.HostConfig.SecurityOpt.some(option => option.startsWith('no-new-privileges')));
-			assert.match(inspected.HostConfig.Tmpfs['/tmp'], /size=(?:64m|67108864)/);
+			assert(/size=(?:64m|67108864)/.test(inspected.HostConfig.Tmpfs['/tmp']));
 			assert.equal(inspected.HostConfig.Privileged, false);
 			assert.deepEqual(inspected.HostConfig.Binds, null);
 			assert.deepEqual(inspected.Mounts, []);
@@ -226,7 +226,7 @@ describe('Tournament Docker sandbox integration', function () {
 		const metadata = JSON.parse(fs.readFileSync(path.join(output, 'metadata.json'), 'utf8'));
 		assert.equal(metadata.schema_version, 2);
 		assert.equal(metadata.runtime.participants.p1.kind, 'docker');
-		assert.match(metadata.runtime.participants.p1.participant_image_id, /^sha256:/);
+		assert(/^sha256:/.test(metadata.runtime.participants.p1.participant_image_id));
 		const replay = loadReplayArtifacts(output);
 		assert(replay.protocol.includes('|turn|1'));
 		assert(replay.protocol.includes('|win|') || replay.protocol.includes('|tie'));

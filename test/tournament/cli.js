@@ -123,8 +123,8 @@ describe('Tournament participant CLI', function () {
 			], { cwd: root, timeout: 30_000 });
 			const summary = JSON.parse(completed.stdout);
 			assert(summary.winner || summary.tie);
-			assert.match(completed.stderr, /Live spectator unavailable: .*EADDRINUSE/);
-			assert.match(completed.stderr, /Continuing match without live spectator/);
+			assert(/Live spectator unavailable: .*EADDRINUSE/.test(completed.stderr));
+			assert(/Continuing match without live spectator/.test(completed.stderr));
 			for (const filename of ['result.json', 'metadata.json', 'battle.protocol.log']) {
 				assert(fs.statSync(path.join(output, filename)).isFile(), filename);
 			}
