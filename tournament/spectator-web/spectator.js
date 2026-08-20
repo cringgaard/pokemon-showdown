@@ -1,84 +1,216 @@
 'use strict';
 
-/* global document, EventSource, Replays, window */
+/* global document, EventSource, location, Replays, window */
+
+function protocolGeneration(presentation) {
+	const generation = presentation?.protocol_generation;
+	return Number.isSafeInteger(generation) && generation >= 0 ? generation : null;
+}
+
+function rendererNeedsReload(currentGeneration, presentation) {
+	const nextGeneration = protocolGeneration(presentation);
+	return nextGeneration !== null && currentGeneration !== null && nextGeneration !== currentGeneration;
+}
+
+function battleScale(width) {
+	return Math.max(0.1, width / 640);
+}
+
+function playbackAcknowledgementGeneration(mode, presentation, rendererState) {
+	if (mode !== 'event' || presentation?.kind !== 'live' || rendererState !== 'ended') return null;
+	return protocolGeneration(presentation);
+}
+
+if (typeof module !== 'undefined' && module.exports) {
+	module.exports = { battleScale, playbackAcknowledgementGeneration, protocolGeneration, rendererNeedsReload };
+}
 
 (function () {
+	if (typeof document === 'undefined') return;
 	const config = JSON.parse(document.getElementById('spectator-config').textContent);
-	const p1Name = document.getElementById('p1-name');
-	const p2Name = document.getElementById('p2-name');
-	const turnLabel = document.getElementById('turn-label');
-	const formatLabel = document.getElementById('format-label');
-	const connectionLabel = document.getElementById('connection-label');
-	const resultBanner = document.getElementById('result-banner');
+	const elements = Object.fromEntries([
+		'event-title', 'event-subtitle', 'p1-name', 'p2-name', 'stage-label', 'turn-label', 'connection-label',
+		'idle-title', 'idle-subtitle', 'idle-next', 'intro-stage', 'intro-p1', 'intro-p2', 'intro-score',
+		'live-score', 'result-stage', 'result-copy', 'result-score', 'standings-stage', 'standings-body',
+		'next-match', 'between-score', 'champion-name', 'champion-score', 'champion-note', 'renderer-warning',
+	].map(id => [id, document.getElementById(id)]));
 	let battle;
 	let sequence = config.sequence;
+	let rendererGeneration = protocolGeneration(config.presentation);
+	let rendererGameID = config.presentation?.game_id || null;
+	const acknowledgedGenerations = new Set();
+	const acknowledgementInFlight = new Set();
 
-	function participant(side) {
-		return config.metadata?.participants?.[side]?.name || side.toUpperCase();
+	function text(id, value) {
+		elements[id].textContent = value == null ? '' : String(value);
+	}
+
+	function participantName(participant, fallback) {
+		return participant?.name || fallback;
+	}
+
+	function scoreText(presentation) {
+		if (!presentation?.series_score) return '';
+		const names = new Map([
+			[presentation.p1?.id, participantName(presentation.p1, presentation.p1?.id)],
+			[presentation.p2?.id, participantName(presentation.p2, presentation.p2?.id)],
+			[presentation.winner?.id, participantName(presentation.winner, presentation.winner?.id)],
+		]);
+		return Object.entries(presentation.series_score).map(([id, score]) => `${names.get(id) || id} ${score}`).join('  ·  ');
+	}
+
+	function nextText(next) {
+		return next ? `${participantName(next.p1, 'TBD')}  vs  ${participantName(next.p2, 'TBD')}` : 'To be announced';
+	}
+
+	function renderStandings(rows) {
+		elements['standings-body'].replaceChildren();
+		for (const row of rows || []) {
+			const tr = document.createElement('tr');
+			for (const value of [row.rank, row.name, row.wins, row.losses, row.ties, row.points]) {
+				const td = document.createElement('td');
+				td.textContent = String(value);
+				tr.appendChild(td);
+			}
+			elements['standings-body'].appendChild(tr);
+		}
+	}
+
+	function sizeBattleRenderer() {
+		const wrapper = document.querySelector('.replay-wrapper');
+		if (!wrapper?.clientWidth) return;
+		wrapper.style.setProperty('--battle-scale', String(battleScale(wrapper.clientWidth)));
 	}
 
 	function updateShell() {
-		p1Name.textContent = participant('p1');
-		p2Name.textContent = participant('p2');
-		formatLabel.textContent = config.metadata?.format || '';
-		if (battle) turnLabel.textContent = battle.turn > 0 ? `Turn ${battle.turn}` : 'Team Preview';
-		const result = config.result;
-		if (result?.tie) resultBanner.textContent = 'Battle ended in a tie';
-		else if (result?.winner) resultBanner.textContent = `${result.winner} wins!`;
+		const state = config.presentation || {};
+		document.body.dataset.state = state.kind || 'idle';
+		text('event-title', state.title || 'Pokemon Bot Tournament');
+		text('event-subtitle', state.subtitle || '');
+		text('stage-label', state.stage_label || '');
+		text('p1-name', participantName(state.p1, 'Player 1'));
+		text('p2-name', participantName(state.p2, 'Player 2'));
+		text('idle-title', state.title || 'Pokemon Bot Tournament');
+		text('idle-subtitle', state.subtitle || '');
+		text('idle-next', state.next_match ? `Next: ${nextText(state.next_match)}` : state.message || 'Tournament ready');
+		text('intro-stage', `${state.stage_label || ''}${state.game_number ? ` · Game ${state.game_number}` : ''}`);
+		text('intro-p1', participantName(state.p1, 'Player 1'));
+		text('intro-p2', participantName(state.p2, 'Player 2'));
+		text('intro-score', scoreText(state));
+		text('live-score', scoreText(state));
+		text('result-stage', state.stage_label || 'Game Result');
+		text('result-copy', state.tie ? 'Battle tied' : state.winner ? `${state.winner.name} wins` : 'Game complete');
+		text('result-score', scoreText(state));
+		text('standings-stage', state.stage_label || 'Standings');
+		text('next-match', nextText(state.next_match));
+		text('between-score', scoreText(state));
+		text('champion-name', participantName(state.winner, 'Champion'));
+		text('champion-score', scoreText(state));
+		text('champion-note', state.champion_reason === 'tie_safety_limit' ? 'Final tie safety limit reached · top qualifier advances' : 'Congratulations');
+		renderStandings(state.standings);
+		if (battle) text('turn-label', battle.turn > 0 ? `Turn ${battle.turn}` : 'Team Preview');
 	}
 
-	async function refreshResult() {
+	async function refreshState() {
 		try {
 			const response = await fetch('/api/spectator');
 			const state = await response.json();
-			config.result = state.result;
+			if (state.presentation) config.presentation = state.presentation;
 			config.complete = state.complete;
 			updateShell();
 		} catch {}
 	}
 
-	function connectLive() {
+	async function acknowledgePlayback(rendererState) {
+		const generation = playbackAcknowledgementGeneration(config.mode, config.presentation, rendererState);
+		if (generation === null || acknowledgedGenerations.has(generation) || acknowledgementInFlight.has(generation)) return;
+		acknowledgementInFlight.add(generation);
+		while (!acknowledgedGenerations.has(generation)) {
+			try {
+				const response = await fetch('/api/playback-complete', {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({ protocol_generation: generation }),
+					keepalive: true,
+				});
+				if (!response.ok) throw new Error(`Playback acknowledgement failed: ${response.status}`);
+				acknowledgedGenerations.add(generation);
+				break;
+			} catch {
+				if (config.presentation?.kind !== 'live' || protocolGeneration(config.presentation) !== generation) break;
+				await new Promise(resolve => { window.setTimeout(resolve, 1000); });
+			}
+		}
+		acknowledgementInFlight.delete(generation);
+	}
+
+	function acceptPresentation(presentation) {
+		const enteringLive = presentation.kind === 'live';
+		if (rendererNeedsReload(rendererGeneration, presentation) || (
+			enteringLive && rendererGeneration === null && rendererGameID && presentation.game_id !== rendererGameID
+		)) {
+			location.reload();
+			return;
+		}
+		rendererGeneration = protocolGeneration(presentation) ?? rendererGeneration;
+		if (presentation.game_id) rendererGameID = presentation.game_id;
+		config.presentation = presentation;
+		updateShell();
+		if (enteringLive) window.setTimeout(sizeBattleRenderer, 0);
+		if (enteringLive && battle?.paused) battle.play();
+	}
+
+	function connect() {
 		const events = new EventSource(`/events?after=${sequence}`);
-		events.addEventListener('open', () => {
-			connectionLabel.textContent = 'Live';
-		});
+		events.addEventListener('open', () => text('connection-label', 'Live'));
 		events.addEventListener('protocol', event => {
 			const entry = JSON.parse(event.data);
 			if (entry.sequence <= sequence) return;
 			sequence = entry.sequence;
-			for (const line of entry.chunk.split('\n')) {
-				if (line) battle.add(line);
-			}
-			if (battle.paused) battle.play();
+			const chunk = entry.chunk || '';
+			for (const line of chunk.split('\n')) if (line && battle) battle.add(line);
+			if (battle?.paused && config.presentation?.kind === 'live') battle.play();
 			updateShell();
 		});
+		events.addEventListener('presentation', event => {
+			const entry = JSON.parse(event.data);
+			if (entry.sequence <= sequence) return;
+			sequence = entry.sequence;
+			if (entry.presentation) acceptPresentation(entry.presentation);
+		});
 		events.addEventListener('complete', () => {
-			connectionLabel.textContent = 'Complete';
-			void refreshResult();
+			text('connection-label', 'Complete');
+			void refreshState();
 		});
-		events.addEventListener('error', () => {
-			connectionLabel.textContent = config.complete ? 'Complete' : 'Reconnecting...';
-		});
+		events.addEventListener('error', () => text('connection-label', config.complete ? 'Complete' : 'Reconnecting'));
 	}
 
+	let attachAttempts = 0;
 	function attach() {
-		if (typeof Replays === 'undefined' || !Replays.battle) return setTimeout(attach, 25);
+		if (typeof Replays === 'undefined' || !Replays.battle) {
+			attachAttempts++;
+			if (attachAttempts === 200) text('renderer-warning', 'Official Showdown renderer unavailable. Check the event preflight and internet connection.');
+			return window.setTimeout(attach, 50);
+		}
 		battle = Replays.battle;
 		const officialSubscription = battle.subscription;
 		battle.subscribe(state => {
 			officialSubscription?.(state);
 			updateShell();
-			if (state === 'ended') void refreshResult();
+			if (state === 'ended') {
+				void acknowledgePlayback(state);
+				void refreshState();
+			}
 		});
+		Replays.changeSetting('speed', 'fast');
+		sizeBattleRenderer();
 		updateShell();
-		if (config.mode === 'live') {
-			Replays.changeSetting('speed', 'fast');
-			battle.play();
-			connectLive();
-		} else {
-			connectionLabel.textContent = 'Saved replay';
-		}
+		if (config.presentation?.kind === 'live') battle.play();
+		if (config.mode !== 'replay') connect();
+		else text('connection-label', 'Saved replay');
 	}
 
+	updateShell();
+	window.addEventListener('resize', sizeBattleRenderer);
 	window.addEventListener('load', attach);
 })();

@@ -1,449 +1,440 @@
-# Codex Handoff — Milestone 2C: Isolated Participant Execution
+# Codex Handoff — Milestone 3: Tournament Final Event Experience
 
-This file is the implementation handoff for Milestone 2C. `tournament/DESIGN.md` remains authoritative for battle mechanics, bot-visible information, decision semantics, artifacts, and spectator isolation. Milestones 1, 2A, and 2B are merged. Update the roadmap/status text in `DESIGN.md` as part of this PR so 2B is complete and 2C is current.
+This is the implementation handoff for the final major milestone of the Pokemon Showdown Bot Tournament project. Milestones 1, 2A, 2B, and 2C are merged. `tournament/DESIGN.md` remains authoritative for battle mechanics, participant-visible information, action semantics, runtime isolation, match artifacts, and the spectator's one-way information boundary.
 
 ## Repository / branch
 
 - Repository: `cringgaard/pokemon-showdown`
-- Working branch: `tournament-sandbox-v1`
-- Base: merged Milestone 2B on `master` (`67bb537df72a92a65a553e0e28cc9f34aadd6f1b`)
-- Milestone 1 PR: #1, merged
-- Milestone 2A PR: #2, merged
-- Milestone 2B PR: #3, merged
+- Working branch: `tournament-final-event-v1`
+- Base: merged Milestone 2C on `master` (`0cf3f9f09e5caf9be1e136b647ee943ab9a31623`)
+- PRs #1, #2, #3, #4 are merged.
 
-Do not restart from any earlier tournament feature branch.
+Do not restart from an earlier tournament branch.
 
 ## Goal
 
-Implement **Milestone 2C only**: participant Python code and its dependencies must execute behind a practical isolation boundary suitable for accepting ordinary untrusted coworker submissions, without changing the established bot API or battle behavior.
+Turn the proven battle platform into something that can actually run and present the workplace tournament/final on a large cafeteria screen.
 
-The end-state should be:
+The result should feel like a small esports event rather than a developer replay page:
 
-> A normal participant directory can be validated, prepared into an isolated runtime image, and used in a complete tournament match. Each worker runs in an ephemeral resource-limited Linux container with no runtime network, no host filesystem mounts, no inherited host secrets/environment, and reliable process-tree termination. Existing timeout/retry/fallback semantics, bot information boundaries, artifacts, and live/replay spectators continue to work unchanged.
+```text
+participant submissions
+        |
+        v
+TournamentOrchestrator
+        |
+        +--> deterministic schedule / series / standings / resume
+        |
+        v
+existing MatchRunner + Docker sandbox
+        |
+        +--> existing artifacts
+        |
+        v
+TournamentEventPublisher
+        |
+        +--> official Showdown battle protocol / renderer
+        +--> event metadata (stage, matchup, score, standings, winner)
+        |
+        v
+16:9 browser presentation on the cafeteria screen
+```
 
-This milestone is about **safe participant execution**, not tournament scheduling or visual polish.
+Do not reopen the simulator, hidden-information model, action API, sandbox, or battle mechanics unless a concrete regression is discovered.
 
-## Threat model
+## Product principles
 
-Treat participant Python and Python dependencies as untrusted application code.
+1. **The official Showdown renderer remains the battle renderer.** Do not build a custom Pokemon battle renderer.
+2. **Tournament metadata is separate from battle protocol.** Stage names, scores, standings, transitions, etc. must never be injected into participant state.
+3. **The event can be operated without editing code.** Participants, format, seeds, stage settings, and presentation title come from configuration / CLI.
+4. **The event is resumable.** A browser refresh, spectator disconnect, or process restart must not destroy completed tournament progress.
+5. **Presentation pacing is not simulator pacing.** Protocol ordering stays authoritative; visual transitions may deliberately delay the next game without delaying a battle already in progress.
+6. **Do not over-engineer a hosted tournament service.** This is a local/internal event, not Battlefy. No accounts, remote auth, cloud database, Kubernetes, chat, etc.
 
-Milestone 2C should protect the tournament host and other participants against ordinary accidental or malicious behavior such as:
-
-- reading arbitrary host files;
-- reading host environment variables/secrets;
-- contacting the internet/LAN during a match;
-- binding/listening on useful network interfaces;
-- writing outside controlled temporary storage;
-- consuming unbounded memory, CPU, processes, file descriptors, or host-side log memory;
-- leaving subprocesses/containers running after timeout or match completion;
-- using participant-controlled Dockerfiles or container options to weaken isolation.
-
-Do **not** claim Docker is a perfect hostile-kernel security boundary. This is an internal programming competition running on a controlled Docker host. Container/daemon/kernel escape vulnerabilities are outside the project threat model. Document this limitation clearly.
-
-## First actions — inspect before refactoring
+## First actions — discovery before implementation
 
 Before changing code:
 
-1. Read `tournament/DESIGN.md`, `tournament/SUBMISSIONS.md`, and `tournament/SPECTATOR.md` completely.
-2. Inspect `tournament/bots/python-worker.ts`, `runtime.ts`, `worker.py`, `match-runner.ts`, submission loading, CLI code, and all tournament tests.
-3. Preserve the existing JSONL worker protocol and `BotController` decision semantics unless a concrete sandbox requirement forces a narrow change.
-4. Inspect the Docker CLI available in the implementation environment. Target standard Linux containers through Docker Engine / Docker Desktop; do not design around Kubernetes or a cloud service.
-5. Prefer invoking the normal `docker` CLI through Node child processes over adding a heavy Docker SDK dependency unless the CLI proves inadequate.
-6. Verify Docker security/runtime flags against current official Docker documentation before finalizing command construction.
+1. Read `tournament/DESIGN.md`, `SUBMISSIONS.md`, `SPECTATOR.md`, the merged spectator implementation, match artifacts, CLI, sandbox runtime, and all tournament tests.
+2. Run a current RandomBot vs GreedyDamageBot live spectator match and inspect the browser UX at 1920x1080.
+3. Inspect exactly how the current official hosted replay renderer is loaded and what network/runtime dependencies it has.
+4. Investigate the official Pokemon Showdown client/replay integration for a robust finals setup. Do **not** casually copy AGPL client code into this MIT server repository. If a locally pinned/served official renderer can be used cleanly with correct licensing/build provenance, document and implement it. Otherwise retain the official hosted renderer but add an explicit event preflight/reachability check and a clear operator warning about the network dependency. Reliability is required; license ambiguity is not acceptable.
+5. Inspect whether browser automation already exists in this repository/environment. Prefer a practical real-browser smoke test if available; otherwise retain automated DOM/server tests and perform/document a manual Chrome 1920x1080 acceptance run.
 
-## Core architectural requirement
+## Part A — tournament configuration
 
-Sandboxing must sit **behind** the existing runtime/controller boundary.
+Add a small explicit tournament configuration format. JSON is acceptable and preferable to adding a dependency solely for YAML. A reasonable shape is:
+
+```json
+{
+  "title": "Pokemon Showdown Bot Tournament",
+  "format": "gen9vgc2025regi",
+  "seed": "2026",
+  "runtime": "docker",
+  "decision_timeout_ms": 5000,
+  "match_timeout_ms": 60000,
+  "participants": [
+    {"id": "alice", "name": "Alice", "submission": "submissions/alice"},
+    {"id": "bob", "name": "Bob", "submission": "submissions/bob"}
+  ],
+  "round_robin": {
+    "games_per_pairing": 3
+  },
+  "final": {
+    "qualifiers": 2,
+    "best_of": 5
+  }
+}
+```
+
+Exact field names may follow repository conventions, but configuration must be schema-validated with actionable errors.
+
+Requirements:
+
+- participant IDs and names unique;
+- at least two participants;
+- odd `best_of` for elimination/final series;
+- positive game counts/timeouts;
+- deterministic canonical participant ordering independent of filesystem enumeration;
+- safe Docker runtime remains default; explicit host runtime remains trusted/dev only;
+- participant preparation/validation happens before tournament play where practical;
+- paths resolve consistently relative to the config file, not caller cwd surprises.
+
+Do not expose arbitrary Docker flags here.
+
+## Part B — deterministic tournament orchestration
+
+Create a `TournamentOrchestrator` layer **above** `MatchRunner`.
+
+It should be possible to run something like:
+
+```bash
+node dist/tournament/cli.js tournament tournament.json --output results/company-cup --spectator-port 8000
+```
+
+### Round robin
+
+Implement a deterministic round-robin schedule for all participants.
+
+- every unordered participant pair meets exactly once as a pairing;
+- each pairing runs the configured number of games;
+- alternate p1/p2 assignment across games where possible so side assignment is not systematically biased;
+- derive every Showdown seed deterministically from tournament seed + stage + pairing identity + game index using a documented stable method;
+- never use wall-clock time or array iteration accidents as seed input;
+- record pairing/game identity in tournament state and match metadata/event metadata.
+
+### Standings
+
+Keep standings deliberately understandable for coworkers watching the event.
+
+Track at minimum:
+
+- games played;
+- wins;
+- losses;
+- ties;
+- points;
+- win percentage or equivalent display statistic.
+
+Use a documented deterministic ranking order. A reasonable initial rule is:
+
+1. points;
+2. head-to-head points among tied participants where unambiguous;
+3. total wins;
+4. deterministic participant ID as the final stable tie-break.
+
+If another simple rule is materially cleaner, document it. Never allow nondeterministic ordering.
+
+A battle tie must not crash standings; define its points explicitly (for example 0.5 each).
+
+### Final series
+
+Support a configured final between the top qualifiers (initially top 2 is sufficient even if the schema names `qualifiers`).
+
+- best-of-N with early termination when one participant reaches `floor(N/2)+1` wins;
+- deterministic per-game seeds;
+- alternate sides between games;
+- series score published after each game;
+- a Showdown tie does not count as a win toward the majority and must have a defined retry/additional-game policy so the series can always produce a champion;
+- do not silently exceed a reasonable safety limit; document the tie policy.
+
+The implementation should not require a general-purpose arbitrary bracket engine in this milestone.
+
+## Part C — durable tournament state and resume
+
+Tournament progress must survive process restart.
+
+Create a schema-versioned tournament state/artifact layout, for example:
+
+```text
+results/company-cup/
+├── tournament.json          # normalized immutable-ish tournament definition / manifest
+├── state.json               # current progress, standings, current/next phase
+├── matches/
+│   ├── round-robin/...      # normal M2A/M2C match artifacts
+│   └── final/...
+└── event.log.jsonl          # optional ordered presentation/orchestration events
+```
+
+Requirements:
+
+- write state atomically (temp + rename or equivalent);
+- never mark a game complete until its ordinary match artifacts are complete;
+- on restart, reconstruct/validate completed games rather than rerunning them;
+- detect incompatible config/state rather than silently mixing tournaments;
+- re-running `tournament ... --output same-dir` resumes by default or has one explicit resume command; no duplicate completed games;
+- completed match artifacts remain individually replayable through the existing spectator path;
+- simulator protocol logs remain the source of truth for battle playback.
+
+Do not attempt distributed locking or multi-host orchestration.
+
+## Part D — event-state publication
+
+Generalize the spectator boundary into an event publisher without weakening the existing battle path.
 
 Conceptually:
 
 ```text
+TournamentOrchestrator
+       |
+       +--> event state: intro / matchup / game / result / standings / champion
+       |
 MatchRunner
-    |
-    v
-BotController
-    |
-    v
-BotWorker interface / factory
-      |                 |
-      v                 v
-HostPythonWorker   DockerPythonWorker
-(trusted/dev)      (participant default)
-                        |
-                        v
-                 ephemeral container
-                        |
-                 tournament worker.py
-                        |
-                 participant main.py
+       |
+       +--> omniscient battle protocol
+       |
+       v
+TournamentEventStore / Publisher
+       |
+       +--> history snapshot
+       +--> SSE live updates
+       v
+browser
 ```
 
-Do not make `MatchRunner` understand Docker commands, container IDs, pip, or filesystem isolation.
+The browser must be able to refresh/late-join and reconstruct the current presentation state plus the current battle from retained history.
 
-A narrow worker/factory abstraction is expected. Exact names are not prescribed.
+Spectator/event delivery failure must remain output-only: it may degrade the screen, but must never change a match result or participant state.
 
-The existing host worker may remain for trusted development/tests, but after 2C the **participant-facing CLI must be safe by default**. If host execution remains available, require an explicit option such as `--runtime host` and describe it as trusted/unsafe execution. Do not silently fall back from Docker to host execution when Docker is unavailable.
+Keep event metadata and Showdown protocol as separate typed event kinds. Do not encode fake Showdown protocol lines for tournament UI.
 
-## Phase 1 — controlled runtime image
+## Part E — polished 16:9 finals presentation
 
-### Base runtime
+This is a first-class requirement, not an afterthought.
 
-Create a tournament-controlled Linux Python base runtime containing the harness `worker.py` and a fixed explicit Python version.
+Design for 1920x1080 / 16:9, viewed from several metres away. It must remain usable on smaller desktop screens, but the cafeteria display is the target.
 
-Requirements:
+### Presentation states
 
-- participant does not supply the base image;
-- participant does not supply a Dockerfile;
-- use an explicit Python version, not floating `latest`;
-- run the participant worker as a non-root user;
-- set `PYTHONDONTWRITEBYTECODE=1` / unbuffered behavior as appropriate for the JSONL protocol;
-- the tournament worker script is supplied by the harness, not copied from participant input;
-- no Docker socket, SSH agent, credentials, or host secrets are included in the image.
+Implement a clear state machine with visually distinct screens/transitions:
 
-Pin the base image by digest if practical in the current Docker workflow. At minimum pin the Python major/minor image and record the resolved runtime image/image ID so the execution environment is auditable.
+1. **Idle / event title**
+   - tournament title;
+   - optional subtitle such as format;
+   - ready/next-up information;
+   - clean enough to leave on screen before the event begins.
 
-### Participant image preparation
+2. **Matchup intro**
+   - participant names prominently left/right;
+   - stage/round/pairing label;
+   - game number and series score when relevant;
+   - Open Team Sheet information may be shown in a readable pre-game layout because this format already exposes it. Reuse parsed team data; do not leak anything beyond the tournament's existing OTS/public/omniscient spectator allowance.
 
-Build a participant image from the submission directory using a **tournament-generated Dockerfile/build definition**.
+3. **Live battle**
+   - official Showdown battle renderer is visually dominant;
+   - large participant names;
+   - stage / game / series score;
+   - current turn;
+   - compact tournament branding/title;
+   - avoid developer/debug clutter;
+   - battle log text must not overwhelm the screen;
+   - controls hidden/minimal during presentation mode.
 
-The participant build should:
+4. **Game result**
+   - clear winner/tie;
+   - updated series score or round-robin result;
+   - short intentional interstitial before next state, not an instantaneous jarring reset.
 
-1. start FROM the tournament-controlled base runtime;
-2. install `requirements.txt` if present;
-3. copy the complete participant submission, including arbitrary models/config/assets, into a fixed path such as `/submission`;
-4. retain the non-root runtime user;
-5. set a stable working directory;
-6. not execute participant `main.py` during image build.
+5. **Standings / between-match screen**
+   - readable standings table with rank, participant, W/L/T/points;
+   - highlight next matchup;
+   - suitable for the operator to leave displayed while people talk.
 
-Dependency installation is now in scope for Milestone 2C.
+6. **Champion screen**
+   - final winner prominently displayed;
+   - final series score;
+   - tournament title;
+   - celebratory but professional; CSS effects are fine, but do not introduce heavy graphics dependencies solely for confetti.
 
-A practical initial policy is Python packages only through `pip` from `requirements.txt`. Do not support participant `apt`, Dockerfiles, privileged build entitlements, host networking, BuildKit secret/SSH mounts, or arbitrary host mounts in this milestone. If some dependency cannot be installed without system packages, fail preparation with an actionable error rather than weakening the sandbox.
+### Visual requirements
 
-Build-time networking may be enabled only as needed for dependency retrieval. **Runtime networking must remain disabled.** Document clearly that dependency resolution/build is a separate trust/supply-chain surface from the runtime network policy.
+- coherent typography and spacing;
+- strong hierarchy visible from distance;
+- no horizontal/vertical scrollbars at 1920x1080;
+- smooth but restrained CSS transitions;
+- no flashing/high-frequency effects;
+- color contrast appropriate for a projector/TV;
+- browser full-screen friendly;
+- resize should not destroy the battle renderer;
+- long participant names must truncate/wrap gracefully rather than overlap;
+- spectator disconnect/reconnect should show a subtle status indication, not replace the battle with a stack trace.
 
-### Preparation UX and caching
+Do not spend this milestone inventing custom Pokemon sprite animations. The official renderer already solves battle presentation.
 
-Provide a reusable preparation abstraction and a user-facing command or equivalent workflow, for example:
+## Part F — operator controls and pacing
 
-```bash
-node dist/tournament/cli.js prepare submissions/alice
-```
+The final event should not require racing the CLI while speaking to the room.
 
-A Docker match should also prepare both participants automatically if needed and fail **before battle start** if either image cannot be built.
+Provide a minimal local operator flow. This may be CLI-driven or a small localhost-only control surface.
 
-Avoid rebuilding an identical submission for every match. Use a deterministic content/runtime hash or another robust cache key based on participant contents + sandbox/runtime version. Return/record the resulting immutable Docker image ID, not just a mutable tag.
+At minimum the operator must be able to:
 
-Do not make image caching affect battle determinism.
+- start/resume the tournament;
+- pause **between games** before starting the next game;
+- advance from intro/interstitial to the next game;
+- display standings;
+- return to next-match intro;
+- recover the browser by refreshing without losing state.
 
-## Phase 2 — locked-down container worker
+Do not implement a mechanism that pauses a Showdown battle after it has started unless the existing protocol already safely supports it. Operator pacing belongs between games/states.
 
-Each participant worker lifetime should run in its own ephemeral container.
+If a web control endpoint is used, bind it to localhost by default and keep it separate from public spectator read endpoints. No authentication system is required for this local internal tool.
 
-The container must be started with a tournament-controlled policy equivalent to at least:
+Provide an `--auto-advance` or equivalent mode for automated tests/demo if manual pacing is the default.
 
-- `--network none`;
-- `--read-only` root filesystem;
-- one bounded writable tmpfs such as `/tmp`;
-- `--cap-drop ALL`;
-- `--security-opt no-new-privileges`;
-- Docker's normal/default seccomp/confinement retained;
-- explicit non-root user;
-- explicit memory limit;
-- swap policy bounded consistently with the memory limit where supported;
-- explicit CPU limit;
-- explicit PIDs/process limit;
-- sensible file-descriptor ulimit;
-- `--init` or equivalent child reaping if useful;
-- `--rm` / explicit cleanup;
-- **no host bind mounts** for the participant submission;
-- **no Docker socket**;
-- **no privileged mode**;
-- **no added devices or capabilities**;
-- **no host PID/network/IPC namespace modes**.
+## Part G — event preflight
 
-Use configurable limits with conservative tournament defaults. Choose defaults that are practical for ordinary Python/ML inference on a developer workstation and document them. Do not implement GPU access in this PR.
+Add a practical preflight command or startup phase that checks before people are watching:
 
-The participant image already contains the submission, so normal runtime should not need to mount the participant host directory at all.
+- config parses and participants validate;
+- duplicate IDs/names rejected;
+- output directory/state compatibility;
+- Docker available when Docker runtime selected;
+- participant images can prepare;
+- spectator port available;
+- official renderer dependency reachable if it remains externally hosted;
+- clear warnings for non-fatal presentation dependencies.
 
-### Environment isolation
-
-Do not pass `{...process.env}` into an untrusted worker/container.
-
-Use an allowlist containing only values actually required by the worker, for example the deterministic bot seed and safe Python runtime variables. A participant must not be able to read unrelated environment variables from the Node host.
-
-Do not put tournament secrets into container labels, command-line arguments, environment variables, image history, or build args.
-
-## Phase 3 — preserve the persistent worker protocol
-
-Inside the container, continue using the established protocol:
-
-```text
-Node BotController
-      |
-      | JSON Lines stdin/stdout
-      v
-worker.py
-      |
-      v
-participant choose_action(state)
-```
-
-Preserve these existing semantics:
-
-- one persistent Python process per worker lifetime;
-- module-level participant initialization happens once per worker lifetime;
-- state/action JSON contract unchanged;
-- participant stdout cannot corrupt the JSONL protocol;
-- participant stderr remains diagnostic only;
-- decision timeout does not reset due to sandbox operations;
-- timeout => terminate entire worker environment/process tree, deterministic fallback, fresh worker next decision;
-- invalid/exception/unavailable-choice semantics remain unchanged;
-- no omniscient spectator data reaches participant code.
-
-Container creation/preparation time must not be charged against a participant's already-started Showdown decision. Prepare images before battle and, where practical, start workers before or immediately at the first request without silently shrinking the configured decision budget.
-
-## Phase 4 — reliable termination and cleanup
-
-Killing only the local `docker run` CLI process is insufficient.
-
-The runtime must track a unique container ID/name for each worker lifetime and explicitly stop/kill the **container** on:
-
-- decision timeout;
-- worker protocol fatal error where restart is required;
-- `BotController.stop()`;
-- normal match completion;
-- match-level timeout/error cleanup.
-
-A participant may create subprocesses. All of them must disappear when the worker is terminated.
-
-Use unique names/labels so concurrent future matches cannot collide. Normal completion and timeout tests must verify there are no managed participant containers left running.
-
-If cleanup itself fails, do not deadlock the battle. Report/log the failure and use best-effort forced cleanup.
-
-## Phase 5 — host-side I/O quotas
-
-Container memory limits do **not** protect the Node process from unbounded participant output.
-
-Harden the worker transport for untrusted output:
-
-- bound captured participant/container stderr by bytes and/or lines; after the limit, truncate/discard while retaining an explicit truncation marker;
-- bound the maximum JSONL protocol line size / receive buffer;
-- reject/terminate a worker that exceeds the protocol output limit;
-- do not allow a participant to make Node retain an unbounded amount of stdout/stderr in memory;
-- keep useful diagnostics in runtime artifacts within those bounds.
-
-Preserve normal participant debugging output within reasonable limits.
-
-This requirement applies to both Docker and host worker implementations if they share the same protocol code.
-
-## CLI / configuration
-
-The exact syntax can follow repository conventions. A reasonable shape is:
-
-```bash
-# Validate static submission/team contract only
-node dist/tournament/cli.js validate submissions/alice
-
-# Build/cache an isolated runtime image
-node dist/tournament/cli.js prepare submissions/alice
-
-# Safe participant execution (default)
-node dist/tournament/cli.js match submissions/alice submissions/bob \
-  --seed 1234 \
-  --output results/alice-vs-bob
-
-# Explicit trusted-development escape hatch only
-node dist/tournament/cli.js match ... --runtime host
-```
-
-Potential sandbox settings include:
-
-```text
---runtime docker|host
---container-memory-mb N
---container-cpus N
---container-pids N
---build-timeout-ms N
-```
-
-Do not expose arbitrary raw Docker flags from participant-controlled input.
-
-If Docker is unavailable and Docker runtime was requested/defaulted, fail before the match with an actionable message explaining how to install/start Docker or explicitly opt into trusted host mode. Never silently downgrade isolation.
-
-## Metadata / audit
-
-Extend match metadata in a backward-compatible/schema-versioned way to record enough runtime information to audit a tournament match, for example:
-
-- runtime kind (`docker` / explicit trusted host);
-- participant image IDs/content hashes;
-- Python/runtime version;
-- memory/CPU/PID limits;
-- network policy (`none`);
-- sandbox policy/version.
-
-Do not put host secrets, full host environment, or unnecessary filesystem paths into artifacts.
-
-The battle seed and all established result/artifact semantics remain unchanged.
+A failed renderer/network preflight must not cause tournament logic to run accidentally. Give the operator a clear actionable message.
 
 ## Tests
 
-Docker-dependent tests should be clearly separated and may skip with an explicit reason when Docker is genuinely unavailable in a generic development/CI environment. They must run when Docker is available. Core non-Docker tournament tests must remain runnable without Docker by explicitly selecting/injecting trusted host runtime where appropriate.
+Add focused tests for the new final-event layer while preserving all existing tournament tests.
 
-Add focused coverage for at least the following.
+### Tournament model
 
-### Runtime abstraction
+- deterministic round-robin schedule for 2, 3, 4+ participants;
+- every pair exactly once;
+- deterministic side alternation;
+- deterministic seed derivation stable across repeated runs;
+- standings including ties and stable tie-break ordering;
+- best-of final early termination;
+- final tie policy terminates deterministically.
 
-- existing host worker behavior remains compatible;
-- Docker worker speaks the same JSONL request/response protocol;
-- BotController does not need Docker-specific battle logic;
-- timeout/restart/fallback behavior is unchanged.
+### Resume/state
 
-### Container policy
+- interrupted tournament resumes without rerunning completed games;
+- state/config mismatch fails clearly;
+- atomic state path behavior;
+- completed match artifacts remain valid/replayable;
+- current/next event state reconstructed after restart.
 
-Verify the actual created container configuration, not only string construction, where practical:
+### Spectator/event store
 
-- network mode is `none`;
-- root filesystem is read-only;
-- expected tmpfs is writable and bounded;
-- non-root user;
-- memory limit configured;
-- CPU limit configured;
-- PIDs limit configured;
-- capabilities dropped;
-- no-new-privileges enabled;
-- no host bind mounts / Docker socket;
-- participant gets only allowlisted environment variables.
+- event history + live continuation;
+- reconnect/late join does not duplicate battle protocol;
+- event metadata cannot reach participant workers;
+- zero spectators does not affect tournament;
+- failed spectator sink does not affect tournament.
 
-### Isolation fixtures
+### UI/server
 
-Use controlled malicious/edge-case test bots that attempt behaviors and then still return legal actions when the sandbox blocks them. Cover at least:
+- each presentation state renders required participant/stage/score/standings fields;
+- long names do not break the shell structurally;
+- replay and live battle use the same official renderer adapter;
+- refresh during a live game reconstructs current battle and shell state;
+- champion/result screen reached from real orchestration events.
 
-- write inside submission/root filesystem is rejected;
-- write to allowed `/tmp` succeeds;
-- outbound network connection fails;
-- an environment variable deliberately present in the host test process is absent inside the container;
-- arbitrary bundled participant asset/model file is readable inside `/submission`;
-- optional `requirements.txt` is installed during image preparation (use a deterministic/practical fixture or document why a network-backed test is manual-only).
+### End to end
 
-### Cleanup / timeout
+Create a small test tournament with at least four distinct fixture/reference participants in trusted-host mode for speed and verify:
 
-- a bot that hangs triggers existing deterministic fallback;
-- its entire container/process tree is killed;
-- next decision can start a fresh container;
-- match completes;
-- no managed participant container remains after timeout + match cleanup;
-- normal match completion also leaves no managed containers.
+- full round robin completes;
+- standings deterministic;
+- correct finalists selected;
+- best-of final completes;
+- champion recorded;
+- every game has normal match artifacts;
+- a fresh process can reload completed tournament state.
 
-### Resource and output abuse
+Also retain at least one Docker-backed smoke/acceptance path so final orchestration is proven compatible with the M2C default runtime. Do not make every orchestration unit test build Docker images.
 
-- oversized/malformed JSONL output does not grow host memory without bound and causes controlled worker failure;
-- excessive stderr is truncated/bounded;
-- resource-limit configuration is inspectable and correct;
-- OOM/process-limit worker termination is handled as participant runtime failure rather than crashing the tournament where a stable test is practical.
+## Manual visual acceptance — required
 
-### End-to-end
+Before declaring this milestone complete, perform a real Chrome acceptance run at a 1920x1080 viewport.
 
-Run two ordinary submission directories through the Docker runtime and verify:
+Use a small configured tournament or a shortened round-robin/final demo and verify visually:
 
-- complete match;
-- normal result/runtime/state artifacts;
-- `battle.protocol.log` still valid;
-- live/replay spectator path still works independently;
-- bot information-boundary tests remain green.
+1. idle/title screen;
+2. matchup intro;
+3. Team Preview;
+4. live Doubles battle with official sprites, moves, HP/status, switches, weather/terrain, Tera and fainting;
+5. names/stage/game/series score remain readable throughout;
+6. result interstitial;
+7. standings screen;
+8. transition into the next game;
+9. final series score updates;
+10. champion screen;
+11. browser refresh during a live game reconstructs correctly;
+12. browser refresh between games reconstructs the correct interstitial/standings state;
+13. no scrollbars/overlaps at 1920x1080;
+14. spectator/browser failure does not stop the tournament process.
 
-## Manual acceptance
+Take screenshots for your own validation / PR description if practical. Do not commit generated screenshots unless they are deliberately useful test fixtures.
 
-Before declaring 2C complete, perform and document a real local Docker acceptance workflow:
+## Acceptance criteria
 
-1. build/prepare RandomBot and GreedyDamageBot as participant images;
-2. run a complete Docker-vs-Docker match;
-3. watch or replay it through the merged 2B spectator path;
-4. run a controlled network/filesystem/environment-isolation fixture and confirm the expected blocks;
-5. run a hanging worker and verify fallback + container cleanup;
-6. run a participant with a small `requirements.txt` dependency and confirm preparation + execution;
-7. confirm `docker ps -a` / labels show no leaked managed containers after normal completion and timeout scenarios.
+Milestone 3 is complete only when:
 
-Record exact commands and observed results in the PR description.
-
-## Milestone 2C acceptance criteria
-
-Milestone 2C is complete only when all are true:
-
-1. Participant-facing match execution uses Docker isolation by default or an equivalently safe explicit default path.
-2. Host execution, if retained, is explicitly selected and clearly marked trusted/unsafe.
-3. Each worker lifetime runs in its own ephemeral isolated container.
-4. Runtime network is disabled.
-5. Participant submission is not host bind-mounted into the runtime container.
-6. Container root filesystem is read-only except bounded approved temporary storage.
-7. Worker runs non-root with capabilities dropped and no-new-privileges.
-8. CPU, memory, process, and file-descriptor limits are applied.
-9. Host environment/secrets are not inherited.
-10. `requirements.txt` can be installed during controlled preparation without participant Dockerfiles or privileged build features.
-11. Arbitrary participant model/config assets are available in the container.
-12. Timeout kills the whole container/process tree and preserves deterministic fallback/restart semantics.
-13. Normal completion and failures do not leak managed containers.
-14. Host-side protocol/stderr buffers are bounded against output abuse.
-15. Existing BotState/action/hidden-information contracts are unchanged.
-16. Existing artifacts and spectator live/replay behavior remain compatible.
-17. Docker-unavailable/build failures fail before battle with actionable errors and never silently fall back to host execution.
-18. Automated Docker policy/isolation/cleanup tests pass when Docker is available.
-19. Existing tournament and full repository validation remain green.
-20. `tournament/DESIGN.md` marks 2B complete and 2C current and documents the chosen isolation/runtime architecture.
+1. A config file can define participants and tournament/event settings without code edits.
+2. Round-robin pairings and game seeds are deterministic.
+3. Standings are deterministic and understandable.
+4. The configured final series produces a champion.
+5. Tournament progress persists and resumes without replaying completed games.
+6. Existing MatchRunner/Docker sandbox remains the actual battle execution path.
+7. Every game still produces the ordinary auditable match artifacts.
+8. Event metadata remains one-way spectator-only and never reaches bots.
+9. Live browser refresh/reconnect reconstructs current event + current battle.
+10. Spectator failure cannot affect tournament results.
+11. The browser has polished idle, intro, live, result, standings, and champion states.
+12. The official Showdown renderer remains the battle renderer.
+13. The 1920x1080 manual acceptance demonstrates a presentation suitable for the cafeteria screen.
+14. The operator can pace transitions between games without editing code.
+15. Preflight catches Docker/config/port/renderer issues before the event begins.
+16. Full tournament tests, repository TypeScript/lint/tests, and relevant Docker acceptance remain green.
+17. `tournament/DESIGN.md` is updated to mark 2C complete and Milestone 3 current/complete as appropriate.
+18. `tournament/SPECTATOR.md` and user-facing tournament documentation contain exact final-event commands.
 
 ## Explicitly out of scope
 
-Do **not** implement in this PR:
+Do not implement unless strictly necessary for acceptance:
 
-- round-robin/bracket scheduling;
-- standings/ranking/series orchestration;
-- polished cafeteria spectator shell;
-- automatic match/intermission transitions;
-- remote/public deployment;
-- authentication/authorization system;
-- Kubernetes or cloud orchestration;
-- GPU access/passthrough;
-- arbitrary participant Dockerfiles;
-- participant-controlled apt/system-package installation;
-- privileged containers;
-- host networking;
-- Docker socket access;
-- VM/microVM isolation;
-- advanced signed-package/SBOM/supply-chain infrastructure;
-- broad unrelated refactors.
+- participant accounts or web submission portal;
+- public internet hosting/authentication;
+- arbitrary bracket editors;
+- Swiss scheduling;
+- distributed workers;
+- cloud database;
+- Kubernetes;
+- GPU sandboxing;
+- chat/commentary system;
+- bot-written natural-language explanations;
+- custom Pokemon battle animation engine;
+- mobile-first UI;
+- major changes to battle mechanics or participant API.
 
-Milestone 3/final event work starts only after isolated one-match execution is robust.
+## Stop condition
 
-## Validation before completion
+Stop when a clean checkout can, from configuration, preflight and run a small tournament through round robin into a final, survive a restart, produce ordinary per-game artifacts, and present the complete event in Chrome as a polished 16:9 experience from title screen through champion screen.
 
-Run:
-
-1. narrow runtime/sandbox tests while iterating;
-2. existing tournament test suite;
-3. TypeScript/build checks;
-4. applicable lint checks;
-5. Docker-enabled integration tests on a machine with Docker;
-6. repository full verification.
-
-Update the PR body with **actual** commands and results. Do not copy old test counts forward.
-
-## Delivery
-
-Implement on `tournament-sandbox-v1` and keep/open a focused PR against `master` titled approximately:
-
-> Implement tournament participant sandbox milestone 2C
-
-The PR description must summarize:
-
-- runtime abstraction chosen;
-- Docker image/preparation strategy;
-- exact runtime security policy/limits;
-- dependency policy;
-- host-output quota design;
-- timeout/container cleanup behavior;
-- CLI workflow;
-- Docker availability requirements;
-- threat-model limitations;
-- automated/manual validation;
-- explicitly deferred Milestone 3 visual/orchestration work.
-
-Do not merge automatically. Stop ready for review.
+Update the PR description with the actual architecture, config example, exact commands, deterministic ranking/seed/tie rules, renderer dependency decision, automated test results, Docker acceptance, and manual 1920x1080 visual acceptance. Mark the PR ready for review and stop. Do not merge.

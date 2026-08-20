@@ -5,10 +5,18 @@ import type { BotWorkerFactory } from './bots/worker-interface';
 import { DEFAULT_FORMAT, MatchRunner } from './match/match-runner';
 import {
 	DEFAULT_MAX_SUBMISSION_BYTES, DEFAULT_MAX_SUBMISSION_FILES, DockerImagePreparer,
+	type ImagePreparerOptions,
 } from './sandbox/image-preparer';
 import { DEFAULT_DOCKER_RESOURCE_POLICY, type DockerResourcePolicy } from './sandbox/policy';
 import { ProtocolStore } from './spectator/protocol-store';
 import { SpectatorServer, startReplayServer } from './spectator/server';
+import { TournamentEventStore, TOURNAMENT_EVENT_SCHEMA_VERSION } from './spectator/event-store';
+import { TournamentEventServer } from './spectator/event-server';
+import { loadTournamentConfig } from './orchestrator/config';
+import { TournamentOrchestrator } from './orchestrator/orchestrator';
+import { TournamentPacingController } from './orchestrator/pacing';
+import { DEFAULT_PLAYBACK_TIMEOUT_MS, TournamentPlaybackController } from './orchestrator/playback';
+import { runTournamentPreflight } from './orchestrator/preflight';
 import {
 	loadSubmission, TOURNAMENT_TEAM_SIZE, type LoadedSubmission,
 } from './submissions/submission-loader';
@@ -26,6 +34,76 @@ async function main(argv = process.argv.slice(2)) {
 	}
 	const args = parseArguments(rest);
 	const format = args.options.get('format') || DEFAULT_FORMAT;
+	if (command === 'preflight' || command === 'tournament') {
+		if (args.positionals.length !== 1) {
+			throw new Error(`${command} requires exactly one tournament config file.\n\n${usage()}`);
+		}
+		assertKnownOptions(args, [
+			'output', 'spectator-port', 'auto-advance', 'allow-renderer-unreachable',
+			'playback-timeout-ms',
+			'build-timeout-ms', 'container-memory-mb', 'container-cpus', 'container-pids',
+			'container-tmpfs-mb', 'container-nofile', 'submission-max-bytes', 'submission-max-files',
+		]);
+		if (command === 'preflight' && args.options.has('auto-advance')) {
+			throw new Error('--auto-advance applies only to the tournament command.');
+		}
+		const output = requiredOption(args, 'output', command);
+		const spectatorPort = requiredIntegerOption(args, 'spectator-port');
+		const config = loadTournamentConfig(args.positionals[0]);
+		const preflight = await runTournamentPreflight({
+			config,
+			outputDirectory: output,
+			spectatorPort,
+			allowRendererUnreachable: booleanOption(args, 'allow-renderer-unreachable'),
+			imagePreparerOptions: dockerPreparerOptions(args),
+		});
+		const summary = {
+			ready: preflight.ready,
+			config_hash: preflight.config_hash,
+			runtime: preflight.runtime,
+			participants: preflight.participants,
+			renderer: preflight.renderer,
+			warnings: preflight.warnings,
+			output: path.resolve(output),
+			spectator_port: spectatorPort,
+		};
+		if (command === 'preflight') {
+			process.stdout.write(`${JSON.stringify(summary, null, 2)}\n`);
+			return;
+		}
+		for (const warning of preflight.warnings) process.stderr.write(`WARNING: ${warning}\n`);
+		const eventStore = new TournamentEventStore({
+			schema_version: TOURNAMENT_EVENT_SCHEMA_VERSION,
+			kind: 'idle',
+			title: config.config.title,
+			subtitle: config.config.subtitle,
+			message: 'Tournament ready',
+		}, path.join(path.resolve(output), 'event.log.jsonl'));
+		const autoAdvance = booleanOption(args, 'auto-advance');
+		const pacing = new TournamentPacingController(eventStore, autoAdvance);
+		const playback = new TournamentPlaybackController({
+			autoComplete: autoAdvance,
+			timeoutMs: integerOption(args, 'playback-timeout-ms') ?? DEFAULT_PLAYBACK_TIMEOUT_MS,
+		});
+		const server = new TournamentEventServer({ store: eventStore, pacing, playback, port: spectatorPort });
+		await server.listen();
+		process.stderr.write(`Tournament spectator: ${server.url()}\nOperator controls: ${server.url()}operator\n`);
+		try {
+			const result = await new TournamentOrchestrator({
+				config,
+				outputDirectory: output,
+				participants: preflight.prepared,
+				eventStore,
+				pacing,
+				playback,
+			}).run();
+			process.stdout.write(`${JSON.stringify({ ...summary, ...result }, null, 2)}\n`);
+			if (!autoAdvance) await waitForSignal();
+		} finally {
+			await server.close();
+		}
+		return;
+	}
 	if (command === 'validate') {
 		if (args.positionals.length !== 1) throw new Error('validate requires exactly one submission directory.\n\n' + usage());
 		assertKnownOptions(args, ['format']);
@@ -43,7 +121,7 @@ async function main(argv = process.argv.slice(2)) {
 			'container-pids', 'container-tmpfs-mb', 'container-nofile', 'submission-max-bytes',
 			'submission-max-files',
 		]);
-		const output = requiredOption(args, 'output');
+		const output = requiredOption(args, 'output', 'match');
 		const seed = parseSeed(args.options.get('seed') || '1,2,3,4');
 		const p1 = loadSubmission(args.positionals[0], { format });
 		const p2 = loadSubmission(args.positionals[1], { format });
@@ -156,7 +234,9 @@ function parseArguments(args: string[]): ParsedArguments {
 			continue;
 		}
 		const [rawName, inlineValue] = arg.slice(2).split('=', 2);
-		const value = inlineValue ?? args[++index];
+		let value = inlineValue;
+		if (value === undefined && BOOLEAN_OPTIONS.has(rawName)) value = 'true';
+		if (value === undefined) value = args[++index];
 		if (!rawName || value === undefined || value.startsWith('--')) throw new Error(`Option --${rawName} requires a value.`);
 		if (options.has(rawName)) throw new Error(`Option --${rawName} was supplied more than once.`);
 		options.set(rawName, value);
@@ -170,10 +250,25 @@ function assertKnownOptions(args: ParsedArguments, known: string[]) {
 	}
 }
 
-function requiredOption(args: ParsedArguments, name: string) {
+function requiredOption(args: ParsedArguments, name: string, command: string) {
 	const value = args.options.get(name);
-	if (!value) throw new Error(`match requires --${name} DIRECTORY.`);
+	if (!value) throw new Error(`${command} requires --${name}.`);
 	return value;
+}
+
+function requiredIntegerOption(args: ParsedArguments, name: string) {
+	const value = integerOption(args, name);
+	if (value === undefined) throw new Error(`--${name} is required.`);
+	return value;
+}
+
+function booleanOption(args: ParsedArguments, name: string) {
+	const value = args.options.get(name);
+	if (value === undefined) return false;
+	if (value !== 'true' && value !== 'false') {
+		throw new Error(`--${name} must be true or false when given a value.`);
+	}
+	return value === 'true';
 }
 
 function integerOption(args: ParsedArguments, name: string) {
@@ -184,6 +279,8 @@ function integerOption(args: ParsedArguments, name: string) {
 	return parsed;
 }
 
+const BOOLEAN_OPTIONS = new Set(['auto-advance', 'allow-renderer-unreachable']);
+
 function numberOption(args: ParsedArguments, name: string) {
 	const value = args.options.get(name);
 	if (value === undefined) return undefined;
@@ -193,6 +290,10 @@ function numberOption(args: ParsedArguments, name: string) {
 }
 
 function dockerPreparer(args: ParsedArguments) {
+	return new DockerImagePreparer(dockerPreparerOptions(args));
+}
+
+function dockerPreparerOptions(args: ParsedArguments): ImagePreparerOptions {
 	const resourcePolicy: DockerResourcePolicy = {
 		memoryMB: integerOption(args, 'container-memory-mb') ?? DEFAULT_DOCKER_RESOURCE_POLICY.memoryMB,
 		cpus: numberOption(args, 'container-cpus') ?? DEFAULT_DOCKER_RESOURCE_POLICY.cpus,
@@ -200,14 +301,14 @@ function dockerPreparer(args: ParsedArguments) {
 		tmpfsMB: integerOption(args, 'container-tmpfs-mb') ?? DEFAULT_DOCKER_RESOURCE_POLICY.tmpfsMB,
 		nofile: integerOption(args, 'container-nofile') ?? DEFAULT_DOCKER_RESOURCE_POLICY.nofile,
 	};
-	return new DockerImagePreparer({
+	return {
 		buildTimeoutMs: integerOption(args, 'build-timeout-ms'),
 		resourcePolicy,
 		submissionLimits: {
 			maxBytes: integerOption(args, 'submission-max-bytes') ?? DEFAULT_MAX_SUBMISSION_BYTES,
 			maxFiles: integerOption(args, 'submission-max-files') ?? DEFAULT_MAX_SUBMISSION_FILES,
 		},
-	});
+	};
 }
 
 function parseSeed(value: string): PRNGSeed {
@@ -280,10 +381,17 @@ function usage() {
 		'Pokemon Showdown tournament harness',
 		'',
 		'Usage:',
+		'  node dist/tournament/cli.js preflight CONFIG --output DIRECTORY --spectator-port PORT [options]',
+		'  node dist/tournament/cli.js tournament CONFIG --output DIRECTORY --spectator-port PORT [options]',
 		'  node dist/tournament/cli.js validate SUBMISSION [--format FORMAT]',
 		'  node dist/tournament/cli.js prepare SUBMISSION [options]',
 		'  node dist/tournament/cli.js match P1_SUBMISSION P2_SUBMISSION --output DIRECTORY [options]',
 		'  node dist/tournament/cli.js spectate MATCH_DIRECTORY [--port PORT]',
+		'',
+		'Tournament options:',
+		'  --auto-advance                 Advance presentation states automatically (tests/demos)',
+		'  --playback-timeout-ms MS       Missing-spectator fallback timeout (default: 300000)',
+		'  --allow-renderer-unreachable  Explicitly rehearse despite failed hosted-renderer preflight',
 		'',
 		'Match options:',
 		'  --runtime docker|host           Docker isolation (default); host is trusted/unsafe',

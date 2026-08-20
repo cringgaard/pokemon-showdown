@@ -1,6 +1,6 @@
 # Pokémon Showdown Bot Tournament — VGC Bot Harness Design
 
-Status: living implementation specification. Milestones 1, 2A, and 2B are complete; Milestone 2C is the current implementation milestone. This document defines the preserved v1 contracts and the roadmap/constraints for spectator presentation, sandboxing, and tournament orchestration.
+Status: living implementation specification. Milestones 1, 2A, 2B, 2C, and 3 are complete. This document defines the preserved v1 contracts for battle execution, participant isolation, tournament orchestration, and final-event presentation.
 
 The tournament uses Pokémon Showdown as the authoritative battle simulator. Participant bots receive a stable semantic Python API built only from their player-visible information, while spectators may consume a separate one-way presentation stream.
 
@@ -49,11 +49,11 @@ Implement real participant directories and preflight validation. The immediate g
 
 Prove that a completed or live harness match can be rendered visually in a browser from the spectator stream/log. The frontend must remain read-only with respect to match execution.
 
-### Milestone 2C — isolated participant execution — CURRENT
+### Milestone 2C — isolated participant execution — COMPLETE
 
 Move participant execution behind a sandbox/container boundary with explicit resource and network policy.
 
-### Milestone 3 — tournament orchestration and polished spectator presentation
+### Milestone 3 — tournament orchestration and polished spectator presentation — COMPLETE
 
 Add scheduling, standings/series handling, crash-resume behavior, aggregate results, and the cafeteria-screen tournament presentation layer.
 
@@ -528,32 +528,54 @@ The implemented runtime supports:
 
 The runtime-controller boundary is preserved: `MatchRunner` receives prepared generic worker factories and contains no Docker CLI, image-build, or container-cleanup logic.
 
-## 19. Milestone 3 — tournament orchestration
+## 19. Milestone 3 — tournament orchestration and final event
 
-Once one isolated participant-vs-participant match is robust, add tournament-level scheduling.
+`TournamentOrchestrator` is a configuration-driven layer above `MatchRunner`. It does not implement battle mechanics, create participant state, or prepare containers. Preflight loads and validates every configured submission, prepares each Docker image when the safe default runtime is selected, and supplies the resulting worker factories to each ordinary `MatchRunner` invocation.
 
-Initial competition orchestration should favor a deterministic round-robin structure with configurable repeated games per pairing rather than immediately optimizing for elimination brackets.
+The normalized JSON config is schema version 1. Participant paths resolve relative to the config file and participant IDs are sorted canonically before scheduling. IDs and display names must be unique, timeouts/game counts must be positive, the final has exactly two qualifiers, and `best_of` must be odd. Docker is the default; `runtime: "host"` remains trusted development only. `tournament/tournament.example.json` is the maintained example.
 
-Tournament configuration should eventually include concepts such as:
+### 19.1 Deterministic schedule and seed derivation
 
-```yaml
-format: <configured-vgc-format>
-games_per_pairing: 10
-decision_timeout_ms: 5000
-max_invalid_attempts: 3
-seed: 2026
+Every unordered participant pair appears once in the round-robin pairing list and plays `games_per_pairing` games. Pairing identity is an unambiguous length-prefixed encoding of the two canonical IDs. Canonically lower participant ID starts as p1; p1/p2 alternate on subsequent games. The final starts with the higher-ranked qualifier as p1 and also alternates sides.
+
+Every Showdown seed is the first four big-endian unsigned 16-bit words of SHA-256 over this exact UTF-8 input:
+
+```text
+pokemon-showdown-tournament-v1\0<tournament seed>\0<stage>\0<pairing ID>\0<zero-based game index>
 ```
 
-Milestone 3 responsibilities include:
+The resulting Showdown seed is serialized as `word0,word1,word2,word3`. Wall-clock time, filesystem order, and object iteration order never contribute.
 
-- participant discovery and validation;
-- deterministic match/seed schedule;
-- repeated games or series;
-- standings and win/loss/tie aggregation;
-- runtime/fallback statistics;
-- resumability after process failure;
-- aggregate result export;
-- spectator transitions between upcoming match, live game, result, standings, and final winner screens.
+### 19.2 Standings and final tie policy
+
+Round-robin scoring awards 1 point for a win, 0 for a loss, and 0.5 to each participant for a battle tie. Ranking is deterministic:
+
+1. total points;
+2. points earned in games among the participants tied on total points;
+3. total wins;
+4. participant ID in ascending lexical order.
+
+The final is best-of-N and stops when a finalist reaches `floor(N / 2) + 1` wins. A tied battle increments neither finalist's wins and schedules another deterministically seeded, side-alternated game. `final.max_tied_games` is a visible safety limit. If that many final games tie before a majority exists, the higher-ranked qualifier becomes champion with `champion_reason: "tie_safety_limit"`; the tournament never loops or silently exceeds the configured cap.
+
+### 19.3 Durable state and event boundary
+
+The output layout contains `tournament.json`, atomic `state.json`, `event.log.jsonl`, and ordinary per-attempt match directories under `matches/<stage>/<pairing>/<game>/attempt-N/`. State and manifest use schema version 1 and carry the normalized-config SHA-256. A mismatched config fails closed. An in-progress attempt whose ordinary `metadata.json`, `result.json`, and `battle.protocol.log` are complete is adopted on restart; a partial attempt is retained for audit and a new attempt directory is used. Completed games are validated and never rerun.
+
+`event.log.jsonl` is explicitly non-authoritative, output-only presentation history. Matchup intro events persist `reset_protocol` and an incremented `protocol_generation`; every later presentation/protocol event for that game carries the same generation. This lets restart reconstruct an empty next-game renderer while paused on an intro and lets browsers replace the official renderer exactly at game boundaries. Invalid/partial log tails recover to their contiguous valid prefix. A spectator-log write failure disables persistence for that process but does not stop in-memory delivery, match execution, or resume from `state.json` and ordinary match artifacts.
+
+Tournament presentation events and canonical battle protocol are separate typed event kinds. The durable event store reconstructs the current presentation plus current-game protocol for browser refresh/late join. It is only a `SpectatorSink` to `MatchRunner`; tournament title, stage, standings, series score, and champion metadata never enter `BotState`. Event append/listener/browser failures are failure-isolated output paths.
+
+Simulator completion and presentation completion are separate. `MatchRunner` may finish immediately; its ordinary artifacts and the completed game in authoritative `state.json` are persisted first. The orchestrator then leaves the current presentation in `live` and waits on a presentation-only controller keyed to that exact `protocol_generation`. The official renderer posts an idempotent acknowledgement only after its subscription reports `ended`, which is the renderer's visually drained state. An acknowledgement can release presentation pacing only for the active generation and cannot change simulation, seeds, results, artifacts, standings, or participant state.
+
+The acknowledgement controller is intentionally in-memory and non-authoritative. A browser refresh or late connection reconstructs the retained live generation and full current protocol, animates it from Team Preview, and sends the same acknowledgement when it reaches the end; duplicate delivery is harmless. A missing or broken display cannot deadlock the event: the operator has an explicit `Skip pending playback` fallback and `--playback-timeout-ms` bounds the wait (300000 ms by default). `--auto-advance` explicitly auto-completes this presentation gate for tests and unattended rehearsals.
+
+### 19.4 Presentation and operation
+
+The 16:9 event shell implements idle/title, matchup intro, live battle, result, standings/next-match, and champion states. Live and saved matches use the same official Showdown `replay-embed.js` adapter. The official renderer remains visually dominant: the shell scales its native 640x360 battle viewport uniformly into the available 16:9 event frame while tournament CSS hides developer-oriented logs and controls during presentation.
+
+Manual operation is the default. The localhost `/operator` surface can advance between states, temporarily show standings, return to the current intro/interstitial, and release a pending visual-playback wait if the display fails. It never pauses or changes an active Showdown battle. `--auto-advance` is provided for tests and rehearsals.
+
+The official hosted embed is retained rather than vendoring the AGPLv3 client and its separately hosted media into this MIT server repository. The embed file itself declares MIT licensing and third-party embedding, but dynamically loads its styles, scripts, data, sprites, and audio from `play.pokemonshowdown.com`. Event preflight fetches the embed, discovers and probes every declared dependency, and fails before tournament play unless the operator explicitly uses `--allow-renderer-unreachable` for a presentation-degraded rehearsal.
 
 ## 20. Reference bots and participant documentation
 
@@ -664,9 +686,13 @@ Do not implement all remaining milestones in one pass.
 
 Research the existing Pokémon Showdown client/rendering path first, then implement the smallest browser spectator POC that can consume the saved/live spectator stream. Do not invent a parallel mechanics renderer.
 
-### Current session: Milestone 2C
+### Completed session: Milestone 2C
 
-Introduce isolated execution behind the runtime abstraction, with Docker as the safe CLI default and explicit trusted host execution only.
+Introduced isolated execution behind the runtime abstraction, with Docker as the safe CLI default and explicit trusted host execution only.
+
+### Completed session: Milestone 3
+
+Added deterministic round-robin/final orchestration, durable resume, event preflight/publication, operator pacing, and the polished official-renderer final-event presentation.
 
 ## 24. Design principles to preserve
 
