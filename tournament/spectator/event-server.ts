@@ -1,11 +1,13 @@
 import * as http from 'http';
 import type { TournamentPacingController } from '../orchestrator/pacing';
+import type { TournamentPlaybackController } from '../orchestrator/playback';
 import type { StoredTournamentEvent, TournamentEventStore } from './event-store';
 import { parseSequence, renderViewerHTML, send, webAsset } from './server';
 
 export interface TournamentEventServerOptions {
 	store: TournamentEventStore;
 	pacing: TournamentPacingController;
+	playback: TournamentPlaybackController;
 	host?: string;
 	port: number;
 }
@@ -13,6 +15,7 @@ export interface TournamentEventServerOptions {
 export class TournamentEventServer {
 	readonly store: TournamentEventStore;
 	readonly pacing: TournamentPacingController;
+	readonly playback: TournamentPlaybackController;
 	readonly host: string;
 	readonly requestedPort: number;
 	private readonly server: http.Server;
@@ -21,9 +24,10 @@ export class TournamentEventServer {
 	constructor(options: TournamentEventServerOptions) {
 		this.store = options.store;
 		this.pacing = options.pacing;
+		this.playback = options.playback;
 		this.host = options.host || '127.0.0.1';
 		this.requestedPort = options.port;
-		this.server = http.createServer((request, response) => this.handle(request, response));
+		this.server = http.createServer((request, response) => { void this.handle(request, response); });
 	}
 
 	async listen() {
@@ -52,7 +56,7 @@ export class TournamentEventServer {
 		});
 	}
 
-	private handle(request: http.IncomingMessage, response: http.ServerResponse) {
+	private async handle(request: http.IncomingMessage, response: http.ServerResponse) {
 		try {
 			const url = new URL(request.url || '/', `http://${request.headers.host || 'localhost'}`);
 			if (request.method === 'GET' && url.pathname === '/') {
@@ -78,7 +82,12 @@ export class TournamentEventServer {
 				return send(response, 200, operatorHTML(), 'text/html; charset=utf-8');
 			}
 			if (request.method === 'GET' && url.pathname === '/api/operator') {
-				return send(response, 200, JSON.stringify(this.pacing.status()), 'application/json; charset=utf-8');
+				return send(response, 200, JSON.stringify(this.operatorStatus()), 'application/json; charset=utf-8');
+			}
+			if (request.method === 'POST' && url.pathname === '/api/playback-complete') {
+				const body = await readJSON(request);
+				const acknowledgement = this.playback.acknowledge(body.protocol_generation as number);
+				return send(response, 200, JSON.stringify(acknowledgement), 'application/json; charset=utf-8');
 			}
 			if (request.method === 'POST' && url.pathname.startsWith('/control/')) {
 				return this.control(url.pathname.slice('/control/'.length), response);
@@ -103,10 +112,15 @@ export class TournamentEventServer {
 		if (action === 'advance') accepted = this.pacing.advance();
 		else if (action === 'standings') accepted = this.pacing.showStandings();
 		else if (action === 'primary') accepted = this.pacing.showPrimary();
+		else if (action === 'playback-complete') accepted = this.playback.forceComplete();
 		else return send(response, 404, 'Unknown control', 'text/plain; charset=utf-8');
 		return send(
-			response, 200, JSON.stringify({ accepted, status: this.pacing.status() }), 'application/json; charset=utf-8'
+			response, 200, JSON.stringify({ accepted, status: this.operatorStatus() }), 'application/json; charset=utf-8'
 		);
+	}
+
+	private operatorStatus() {
+		return { pacing: this.pacing.status(), playback: this.playback.status() };
 	}
 
 	private events(request: http.IncomingMessage, response: http.ServerResponse, url: URL) {
@@ -145,9 +159,30 @@ export class TournamentEventServer {
 }
 
 function operatorHTML() {
-	return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Tournament operator</title><style>body{font:18px system-ui;background:#07111f;color:#fff;max-width:700px;margin:50px auto;padding:20px}button{font:inherit;padding:18px 24px;margin:8px;border:0;border-radius:10px;background:#39a0ff;color:#04101c;font-weight:800}.secondary{background:#d7e5f5}pre{background:#101e31;padding:18px;border-radius:10px}</style></head><body><h1>Tournament operator</h1><p>Controls only affect presentation pacing between games. An active battle is never paused.</p><button data-action="advance">Advance</button><button class="secondary" data-action="standings">Show standings</button><button class="secondary" data-action="primary">Return to current screen</button><pre id="status">Loading…</pre><script>const status=document.querySelector('#status');async function refresh(){status.textContent=JSON.stringify(await (await fetch('/api/operator')).json(),null,2)}document.addEventListener('click',async e=>{const action=e.target.dataset.action;if(!action)return;await fetch('/control/'+action,{method:'POST'});await refresh()});refresh();</script></body></html>`;
+	return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Tournament operator</title><style>body{font:18px system-ui;background:#07111f;color:#fff;max-width:700px;margin:50px auto;padding:20px}button{font:inherit;padding:18px 24px;margin:8px;border:0;border-radius:10px;background:#39a0ff;color:#04101c;font-weight:800}.secondary{background:#d7e5f5}pre{background:#101e31;padding:18px;border-radius:10px}</style></head><body><h1>Tournament operator</h1><p>A completed simulator remains live until the official renderer finishes, the playback timeout expires, or the fallback below is used.</p><button data-action="advance">Advance</button><button class="secondary" data-action="standings">Show standings</button><button class="secondary" data-action="primary">Return to current screen</button><button class="secondary" data-action="playback-complete">Skip pending playback</button><pre id="status">Loading…</pre><script>const status=document.querySelector('#status');async function refresh(){status.textContent=JSON.stringify(await (await fetch('/api/operator')).json(),null,2)}document.addEventListener('click',async e=>{const action=e.target.dataset.action;if(!action)return;await fetch('/control/'+action,{method:'POST'});await refresh()});refresh();setInterval(refresh,1000);</script></body></html>`;
 }
 
 function errorMessage(error: unknown) {
 	return error instanceof Error ? error.message : String(error);
+}
+
+function readJSON(request: http.IncomingMessage) {
+	return new Promise<Record<string, unknown>>((resolve, reject) => {
+		let body = '';
+		request.setEncoding('utf8');
+		request.on('data', chunk => {
+			body += chunk;
+			if (body.length > 1024) request.destroy(new Error('Request body too large.'));
+		});
+		request.on('end', () => {
+			try {
+				const value = JSON.parse(body);
+				if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Expected a JSON object.');
+				resolve(value as Record<string, unknown>);
+			} catch (error) {
+				reject(error);
+			}
+		});
+		request.on('error', reject);
+	});
 }

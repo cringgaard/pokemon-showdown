@@ -36,6 +36,10 @@ The command resumes the selected output directory by default. It validates compl
 
 Manual pacing is the default. The operator can advance from the title/intro/interstitial, show standings while waiting, and return to the current event screen. Controls affect only the interval between games and states; they never pause a battle in progress. For automated tests or an unattended demo, add `--auto-advance`.
 
+After advancing a matchup intro, the simulator may finish much faster than the official renderer. The authoritative completed game and normal match artifacts are saved immediately, but the presentation remains `live` until the official renderer reports that the current protocol generation has visually ended. Only then is the result screen published. The browser acknowledgement is generation-scoped and idempotent; it cannot affect a battle, result, seed, artifact, standing, or participant state.
+
+If the display is absent or broken, the presentation wait releases after 300 seconds. Set a different positive bound with `--playback-timeout-ms MS`. The operator page also provides `Skip pending playback` as an explicit fallback. These fallbacks skip only presentation playback; they do not cancel, rerun, or alter the completed game. `--auto-advance` bypasses the playback wait as part of its test/demo behavior.
+
 Docker remains the safe default runtime. A config may set `"runtime": "host"` only for trusted development; the CLI emits an explicit warning.
 
 ## Deterministic tournament rules
@@ -66,7 +70,7 @@ Every game directory is a normal existing `MatchRunner` artifact set with `metad
 
 The event log retains presentation transitions and current-game protocol in order. Every matchup intro starts a new, durable `protocol_generation`; the live state for that game retains it. A browser reloads the official renderer whenever this generation changes, including after a refresh on a result or standings screen, so one renderer instance can never receive two games' protocol.
 
-A refreshed or late-joining browser receives a current HTML snapshot containing only the current generation's complete battle protocol, then continues from the next SSE sequence without duplication. A disconnect shows a subtle reconnecting status and cannot backpressure or stop tournament execution. The event log is output-only: an invalid or partial tail is truncated to its valid prefix, and a write failure disables further event-log persistence for that process while in-memory presentation continues. Such degradation is reported in spectator delivery errors and never invalidates authoritative `state.json` or ordinary match artifacts.
+A refreshed or late-joining browser receives a current HTML snapshot containing only the current generation's complete battle protocol, then continues from the next SSE sequence without duplication. If simulation already completed while the presentation is still pending, the refreshed browser reconstructs that live generation, animates it from Team Preview through the end, and acknowledges it once; server-side duplicate acknowledgements are harmless. A disconnect shows a subtle reconnecting status and cannot backpressure or deadlock tournament execution because the timeout/operator fallbacks remain available. The event log is output-only: an invalid or partial tail is truncated to its valid prefix, and a write failure disables further event-log persistence for that process while in-memory presentation continues. Such degradation is reported in spectator delivery errors and never invalidates authoritative `state.json` or ordinary match artifacts.
 
 ## Official renderer dependency decision
 
@@ -75,6 +79,8 @@ Both completed replays and live/event battles use Pokémon Showdown's official h
 The larger client repository is AGPLv3 and omits important sprite/audio assets from source control. This MIT server repository therefore does not vendor an ambiguously licensed/incomplete client build. Internet access to `play.pokemonshowdown.com` is an explicit event dependency, enforced by preflight.
 
 For a venue display, use a 1920x1080 browser viewport in fullscreen or kiosk mode. The shell uniformly scales the official renderer's native 640x360 battle viewport into the available 16:9 battle frame; it does not replace or redraw Showdown battle content. Before doors open, walk the operator flow through title, intro, live battle, result, standings, final, and champion, and refresh once during a live game and once on a between-game screen.
+
+The 2026-08-20 real-Chrome regression dry run used a 1920x1080 viewport and a four-participant host-runtime acceptance tournament. After Advance from the first intro, the server had already persisted the completed simulation but remained in `live`. Chrome visibly showed Team Preview, opening switches, and turns; a refresh during pending playback reconstructed Team Preview and continued through Turn 12. The official renderer visibly displayed `Beta Builders won the battle!` before the result screen appeared. A second refresh on standings reconstructed four rows and the next matchup. The event then reached the champion screen after eight completed ordinary matches; later games used the operator playback fallback to keep the acceptance run bounded.
 
 ## Single-match replay compatibility
 

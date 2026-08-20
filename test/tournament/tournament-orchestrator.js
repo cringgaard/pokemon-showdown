@@ -7,6 +7,8 @@ const assert = require('../assert');
 const { loadTournamentConfig } = require('../../dist/tournament/orchestrator/config');
 const { TournamentOrchestrator } = require('../../dist/tournament/orchestrator/orchestrator');
 const { TournamentPacingController } = require('../../dist/tournament/orchestrator/pacing');
+const { TournamentPlaybackController } = require('../../dist/tournament/orchestrator/playback');
+const { roundRobinSchedule } = require('../../dist/tournament/orchestrator/model');
 const { TournamentStateStore } = require('../../dist/tournament/orchestrator/state-store');
 const {
 	prepareMatchArtifactDirectory, writeMatchArtifacts,
@@ -100,6 +102,38 @@ describe('TournamentOrchestrator durable deterministic execution', function () {
 		assert.equal(result.champion, completed.champion);
 		assert.equal(reruns, 0);
 	});
+
+	it('persists a fast simulator result but keeps presentation live until visual completion', async () => {
+		const loaded = makeConfig(temporaryRoot, {});
+		const playback = new TournamentPlaybackController({ timeoutMs: 5000 });
+		const tournament = harness(
+			loaded, path.join(temporaryRoot, 'playback-results'),
+			fakeExecutor([], options => options.p1.id), playback
+		);
+		const game = roundRobinSchedule(loaded.config)[0];
+		const presentation = tournament.orchestrator.presentAndRun(game, 1, null);
+		await waitUntil(() => tournament.state().completed_games.length === 1);
+		assert.equal(tournament.events.presentation.kind, 'live');
+		assert(!tournament.events.events.some(event => event.presentation?.kind === 'result'));
+		const generation = tournament.events.presentation.protocol_generation;
+		assert.deepEqual(playback.acknowledge(generation), { accepted: true, duplicate: false });
+		assert.deepEqual(playback.acknowledge(generation), { accepted: false, duplicate: true });
+		await presentation;
+		assert.equal(tournament.events.presentation.kind, 'result');
+	});
+
+	it('releases pending playback after the disconnected-spectator timeout', async () => {
+		const loaded = makeConfig(temporaryRoot, {});
+		const playback = new TournamentPlaybackController({ timeoutMs: 20 });
+		const tournament = harness(
+			loaded, path.join(temporaryRoot, 'timeout-results'),
+			fakeExecutor([], options => options.p1.id), playback
+		);
+		const game = roundRobinSchedule(loaded.config)[0];
+		await tournament.orchestrator.presentAndRun(game, 1, null);
+		assert.equal(tournament.events.presentation.kind, 'result');
+		assert.equal(playback.status().last_completion_reason, 'timeout');
+	});
 });
 
 function makeConfig(root, options) {
@@ -122,7 +156,7 @@ function makeConfig(root, options) {
 	return loadTournamentConfig(filename);
 }
 
-function harness(config, output, executor) {
+function harness(config, output, executor, playback = new TournamentPlaybackController({ autoComplete: true })) {
 	const events = new TournamentEventStore({ schema_version: 1, kind: 'idle', title: config.config.title });
 	const pacing = new TournamentPacingController(events, true);
 	const participants = new Map(config.config.participants.map(participant => [participant.id, {
@@ -133,9 +167,17 @@ function harness(config, output, executor) {
 		workerFactory: { audit: { kind: 'host', trusted: true }, create() { throw new Error('unused'); } },
 	}]));
 	const orchestrator = new TournamentOrchestrator({
-		config, outputDirectory: output, participants, eventStore: events, pacing, matchExecutor: executor,
+		config, outputDirectory: output, participants, eventStore: events, pacing, playback, matchExecutor: executor,
 	});
 	return { orchestrator, events, state: () => orchestrator.stateStore.state };
+}
+
+async function waitUntil(predicate) {
+	for (let attempt = 0; attempt < 100; attempt++) {
+		if (predicate()) return;
+		await new Promise(resolve => { setTimeout(resolve, 5); });
+	}
+	throw new Error('Timed out waiting for tournament state.');
 }
 
 function fakeExecutor(calls, outcome) {

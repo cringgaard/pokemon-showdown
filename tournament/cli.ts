@@ -15,6 +15,7 @@ import { TournamentEventServer } from './spectator/event-server';
 import { loadTournamentConfig } from './orchestrator/config';
 import { TournamentOrchestrator } from './orchestrator/orchestrator';
 import { TournamentPacingController } from './orchestrator/pacing';
+import { DEFAULT_PLAYBACK_TIMEOUT_MS, TournamentPlaybackController } from './orchestrator/playback';
 import { runTournamentPreflight } from './orchestrator/preflight';
 import {
 	loadSubmission, TOURNAMENT_TEAM_SIZE, type LoadedSubmission,
@@ -39,6 +40,7 @@ async function main(argv = process.argv.slice(2)) {
 		}
 		assertKnownOptions(args, [
 			'output', 'spectator-port', 'auto-advance', 'allow-renderer-unreachable',
+			'playback-timeout-ms',
 			'build-timeout-ms', 'container-memory-mb', 'container-cpus', 'container-pids',
 			'container-tmpfs-mb', 'container-nofile', 'submission-max-bytes', 'submission-max-files',
 		]);
@@ -79,7 +81,11 @@ async function main(argv = process.argv.slice(2)) {
 		}, path.join(path.resolve(output), 'event.log.jsonl'));
 		const autoAdvance = booleanOption(args, 'auto-advance');
 		const pacing = new TournamentPacingController(eventStore, autoAdvance);
-		const server = new TournamentEventServer({ store: eventStore, pacing, port: spectatorPort });
+		const playback = new TournamentPlaybackController({
+			autoComplete: autoAdvance,
+			timeoutMs: integerOption(args, 'playback-timeout-ms') ?? DEFAULT_PLAYBACK_TIMEOUT_MS,
+		});
+		const server = new TournamentEventServer({ store: eventStore, pacing, playback, port: spectatorPort });
 		await server.listen();
 		process.stderr.write(`Tournament spectator: ${server.url()}\nOperator controls: ${server.url()}operator\n`);
 		try {
@@ -89,6 +95,7 @@ async function main(argv = process.argv.slice(2)) {
 				participants: preflight.prepared,
 				eventStore,
 				pacing,
+				playback,
 			}).run();
 			process.stdout.write(`${JSON.stringify({ ...summary, ...result }, null, 2)}\n`);
 			if (!autoAdvance) await waitForSignal();
@@ -383,6 +390,7 @@ function usage() {
 		'',
 		'Tournament options:',
 		'  --auto-advance                 Advance presentation states automatically (tests/demos)',
+		'  --playback-timeout-ms MS       Missing-spectator fallback timeout (default: 300000)',
 		'  --allow-renderer-unreachable  Explicitly rehearse despite failed hosted-renderer preflight',
 		'',
 		'Match options:',

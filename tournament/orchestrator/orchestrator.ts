@@ -13,6 +13,7 @@ import {
 	type ScheduledGame, type Standing,
 } from './model';
 import type { TournamentPacingController } from './pacing';
+import type { TournamentPlaybackController } from './playback';
 import { TournamentStateStore } from './state-store';
 
 export interface PreparedTournamentParticipant {
@@ -26,6 +27,7 @@ export interface TournamentOrchestratorOptions {
 	participants: Map<string, PreparedTournamentParticipant>;
 	eventStore: TournamentEventStore;
 	pacing: TournamentPacingController;
+	playback: TournamentPlaybackController;
 	matchExecutor?: (options: MatchOptions) => Promise<MatchResult>;
 }
 
@@ -35,6 +37,7 @@ export class TournamentOrchestrator {
 	readonly participants: Map<string, PreparedTournamentParticipant>;
 	readonly eventStore: TournamentEventStore;
 	readonly pacing: TournamentPacingController;
+	readonly playback: TournamentPlaybackController;
 	private readonly executeMatch: (options: MatchOptions) => Promise<MatchResult>;
 
 	constructor(options: TournamentOrchestratorOptions) {
@@ -43,6 +46,7 @@ export class TournamentOrchestrator {
 		this.participants = options.participants;
 		this.eventStore = options.eventStore;
 		this.pacing = options.pacing;
+		this.playback = options.playback;
 		this.executeMatch = options.matchExecutor || (matchOptions => new MatchRunner(matchOptions).run());
 		for (const participant of this.config.config.participants) {
 			if (!this.participants.has(participant.id)) throw new Error(`Participant ${participant.id} was not prepared.`);
@@ -121,7 +125,8 @@ export class TournamentOrchestrator {
 		const intro = this.matchState('intro', game, gameNumber, score);
 		this.eventStore.publishPresentation(intro, true);
 		await this.pacing.wait(intro, this.standingsState(game));
-		const completed = await this.runGame(game, gameNumber, score);
+		const { completed, protocolGeneration } = await this.runGame(game, gameNumber, score);
+		await this.playback.waitForCompletion(protocolGeneration);
 		const result = this.resultState(completed, gameNumber, score);
 		this.eventStore.publishPresentation(result);
 		await this.pacing.wait(result, this.standingsState(null));
@@ -135,6 +140,11 @@ export class TournamentOrchestrator {
 		this.stateStore.save();
 		const live = this.matchState('live', game, gameNumber, score);
 		this.eventStore.publishPresentation(live);
+		const protocolGeneration = this.eventStore.presentation.protocol_generation;
+		if (!Number.isSafeInteger(protocolGeneration)) {
+			throw new Error(`Match ${game.id} has no spectator protocol generation.`);
+		}
+		this.playback.beginGeneration(protocolGeneration!);
 		const result = await this.executeMatch({
 			format: this.config.config.format,
 			seed: game.seed,
@@ -160,7 +170,7 @@ export class TournamentOrchestrator {
 		this.stateStore.state.completed_games.push(completed);
 		this.stateStore.state.in_progress = null;
 		this.stateStore.save();
-		return completed;
+		return { completed, protocolGeneration: protocolGeneration! };
 	}
 
 	private recoverCompletedAttempt(): CompletedTournamentGame | null {

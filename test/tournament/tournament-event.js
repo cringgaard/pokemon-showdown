@@ -6,11 +6,12 @@ const os = require('os');
 const path = require('path');
 const assert = require('../assert');
 const { TournamentPacingController } = require('../../dist/tournament/orchestrator/pacing');
+const { TournamentPlaybackController } = require('../../dist/tournament/orchestrator/playback');
 const { TournamentEventServer } = require('../../dist/tournament/spectator/event-server');
 const { TournamentEventStore } = require('../../dist/tournament/spectator/event-store');
 const { renderViewerHTML } = require('../../dist/tournament/spectator/server');
 const {
-	battleScale, protocolGeneration, rendererNeedsReload,
+	battleScale, playbackAcknowledgementGeneration, protocolGeneration, rendererNeedsReload,
 } = require('../../tournament/spectator-web/spectator');
 
 describe('Tournament event reconstruction and presentation shell', function () {
@@ -139,7 +140,9 @@ describe('Tournament event reconstruction and presentation shell', function () {
 		store.publishPresentation({ ...presentation('live'), game_id: 'game-1' }, true);
 		store.publish('|start');
 		const pacing = new TournamentPacingController(store, false);
-		server = new TournamentEventServer({ store, pacing, port: 0 });
+		server = new TournamentEventServer({
+			store, pacing, playback: new TournamentPlaybackController({ autoComplete: true }), port: 0,
+		});
 		await server.listen();
 
 		const page = await requestText(server.url());
@@ -156,7 +159,8 @@ describe('Tournament event reconstruction and presentation shell', function () {
 	it('exposes operator pacing controls separately from spectator reads', async () => {
 		const store = new TournamentEventStore(presentation('intro'));
 		const pacing = new TournamentPacingController(store, false);
-		server = new TournamentEventServer({ store, pacing, port: 0 });
+		const playback = new TournamentPlaybackController({ timeoutMs: 5000 });
+		server = new TournamentEventServer({ store, pacing, playback, port: 0 });
 		await server.listen();
 		let resolved = false;
 		void pacing.wait(presentation('intro'), presentation('standings')).then(() => { resolved = true; });
@@ -169,6 +173,43 @@ describe('Tournament event reconstruction and presentation shell', function () {
 		await requestText(`${server.url()}control/advance`, 'POST');
 		await Promise.resolve();
 		assert.equal(resolved, true);
+		playback.beginGeneration(4);
+		const pending = playback.waitForCompletion(4);
+		await requestText(`${server.url()}control/playback-complete`, 'POST');
+		assert.equal(await pending, 'operator');
+	});
+
+	it('reconstructs pending playback after refresh and accepts its generation idempotently', async () => {
+		const store = new TournamentEventStore(presentation('idle'));
+		store.publishPresentation({ ...presentation('intro'), game_id: 'game-1' }, true);
+		store.publishPresentation({ ...presentation('live'), game_id: 'game-1' });
+		store.publish('|start\n|turn|1\n|win|Alice');
+		const pacing = new TournamentPacingController(store, false);
+		const playback = new TournamentPlaybackController({ timeoutMs: 5000 });
+		server = new TournamentEventServer({ store, pacing, playback, port: 0 });
+		await server.listen();
+		playback.beginGeneration(store.presentation.protocol_generation);
+		const pending = playback.waitForCompletion(store.presentation.protocol_generation);
+		const refreshed = await requestText(server.url());
+		assert(refreshed.includes('"kind":"live"'));
+		assert(refreshed.includes('|win|Alice'));
+		const first = JSON.parse(await requestJSON(`${server.url()}api/playback-complete`, {
+			protocol_generation: store.presentation.protocol_generation,
+		}));
+		const duplicate = JSON.parse(await requestJSON(`${server.url()}api/playback-complete`, {
+			protocol_generation: store.presentation.protocol_generation,
+		}));
+		assert.deepEqual(first, { accepted: true, duplicate: false });
+		assert.deepEqual(duplicate, { accepted: false, duplicate: true });
+		assert.equal(await pending, 'spectator');
+	});
+
+	it('acknowledges only an ended live event generation', () => {
+		const live = { ...presentation('live'), protocol_generation: 7 };
+		assert.equal(playbackAcknowledgementGeneration('event', live, 'ended'), 7);
+		assert.equal(playbackAcknowledgementGeneration('event', live, 'playing'), null);
+		assert.equal(playbackAcknowledgementGeneration('event', presentation('result'), 'ended'), null);
+		assert.equal(playbackAcknowledgementGeneration('replay', live, 'ended'), null);
 	});
 
 	for (const kind of ['idle', 'intro', 'live', 'result', 'standings', 'champion']) {
@@ -208,6 +249,21 @@ function requestText(url, method = 'GET') {
 		});
 		request.on('error', reject);
 		request.end();
+	});
+}
+
+function requestJSON(url, body) {
+	return new Promise((resolve, reject) => {
+		const request = http.request(url, {
+			method: 'POST', headers: { 'Content-Type': 'application/json' },
+		}, response => {
+			response.setEncoding('utf8');
+			let text = '';
+			response.on('data', chunk => { text += chunk; });
+			response.on('end', () => resolve(text));
+		});
+		request.on('error', reject);
+		request.end(JSON.stringify(body));
 	});
 }
 

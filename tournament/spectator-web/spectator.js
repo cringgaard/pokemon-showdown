@@ -16,8 +16,13 @@ function battleScale(width) {
 	return Math.max(0.1, width / 640);
 }
 
+function playbackAcknowledgementGeneration(mode, presentation, rendererState) {
+	if (mode !== 'event' || presentation?.kind !== 'live' || rendererState !== 'ended') return null;
+	return protocolGeneration(presentation);
+}
+
 if (typeof module !== 'undefined' && module.exports) {
-	module.exports = { battleScale, protocolGeneration, rendererNeedsReload };
+	module.exports = { battleScale, playbackAcknowledgementGeneration, protocolGeneration, rendererNeedsReload };
 }
 
 (function () {
@@ -33,6 +38,8 @@ if (typeof module !== 'undefined' && module.exports) {
 	let sequence = config.sequence;
 	let rendererGeneration = protocolGeneration(config.presentation);
 	let rendererGameID = config.presentation?.game_id || null;
+	const acknowledgedGenerations = new Set();
+	const acknowledgementInFlight = new Set();
 
 	function text(id, value) {
 		elements[id].textContent = value == null ? '' : String(value);
@@ -114,6 +121,29 @@ if (typeof module !== 'undefined' && module.exports) {
 		} catch {}
 	}
 
+	async function acknowledgePlayback(rendererState) {
+		const generation = playbackAcknowledgementGeneration(config.mode, config.presentation, rendererState);
+		if (generation === null || acknowledgedGenerations.has(generation) || acknowledgementInFlight.has(generation)) return;
+		acknowledgementInFlight.add(generation);
+		while (!acknowledgedGenerations.has(generation)) {
+			try {
+				const response = await fetch('/api/playback-complete', {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({ protocol_generation: generation }),
+					keepalive: true,
+				});
+				if (!response.ok) throw new Error(`Playback acknowledgement failed: ${response.status}`);
+				acknowledgedGenerations.add(generation);
+				break;
+			} catch {
+				if (config.presentation?.kind !== 'live' || protocolGeneration(config.presentation) !== generation) break;
+				await new Promise(resolve => { window.setTimeout(resolve, 1000); });
+			}
+		}
+		acknowledgementInFlight.delete(generation);
+	}
+
 	function acceptPresentation(presentation) {
 		const enteringLive = presentation.kind === 'live';
 		if (rendererNeedsReload(rendererGeneration, presentation) || (
@@ -167,7 +197,10 @@ if (typeof module !== 'undefined' && module.exports) {
 		battle.subscribe(state => {
 			officialSubscription?.(state);
 			updateShell();
-			if (state === 'ended') void refreshState();
+			if (state === 'ended') {
+				void acknowledgePlayback(state);
+				void refreshState();
+			}
 		});
 		Replays.changeSetting('speed', 'fast');
 		sizeBattleRenderer();

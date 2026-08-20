@@ -11,6 +11,7 @@ const { MatchRunner, DEFAULT_FORMAT } = require('../../dist/tournament/match/mat
 const { loadTournamentConfig } = require('../../dist/tournament/orchestrator/config');
 const { TournamentOrchestrator } = require('../../dist/tournament/orchestrator/orchestrator');
 const { TournamentPacingController } = require('../../dist/tournament/orchestrator/pacing');
+const { TournamentPlaybackController } = require('../../dist/tournament/orchestrator/playback');
 const {
 	DockerImagePreparer, hashSubmission, participantDockerfile, runtimeDockerfile, validateRequirementsFile,
 } = require('../../dist/tournament/sandbox/image-preparer');
@@ -328,6 +329,7 @@ describe('Tournament Docker sandbox integration', function () {
 			]),
 			eventStore: events,
 			pacing: new TournamentPacingController(events, true),
+			playback: new TournamentPlaybackController({ autoComplete: true }),
 		});
 		const result = await orchestrator.run();
 		assert(result.champion);

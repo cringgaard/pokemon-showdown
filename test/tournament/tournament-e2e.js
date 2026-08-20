@@ -8,6 +8,7 @@ const { loadTournamentConfig } = require('../../dist/tournament/orchestrator/con
 const { calculateStandings } = require('../../dist/tournament/orchestrator/model');
 const { TournamentOrchestrator } = require('../../dist/tournament/orchestrator/orchestrator');
 const { TournamentPacingController } = require('../../dist/tournament/orchestrator/pacing');
+const { TournamentPlaybackController } = require('../../dist/tournament/orchestrator/playback');
 const { runTournamentPreflight } = require('../../dist/tournament/orchestrator/preflight');
 const { TournamentStateStore } = require('../../dist/tournament/orchestrator/state-store');
 const { TournamentEventStore } = require('../../dist/tournament/spectator/event-store');
@@ -51,6 +52,7 @@ describe('Tournament four-participant end to end', function () {
 			const pacing = new TournamentPacingController(events, true);
 			const orchestrator = new TournamentOrchestrator({
 				config, outputDirectory: output, participants: preflight.prepared, eventStore: events, pacing,
+				playback: new TournamentPlaybackController({ autoComplete: true }),
 			});
 			const result = await orchestrator.run();
 			const state = orchestrator.stateStore.state;
