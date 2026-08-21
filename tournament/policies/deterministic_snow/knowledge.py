@@ -396,6 +396,13 @@ def build_knowledge_state(state: Mapping[str, Any]) -> KnowledgeState:
 	own_active = tuple((position, own_active_mapping[position]) for position in ("left", "right") if position in own_active_mapping)
 	own_selected = () if request.get("kind") == "team_preview" else tuple(pokemon.id for pokemon in own_team)
 
+	history_events = tuple(
+		PublicHistoryEvent(index, event["turn"], event["type"], canonical_json(event.get("data", {})), event["raw"])
+		for index, event_value in enumerate(_array(state, "history"))
+		for event in (_mapping(event_value, "history event"),)
+	)
+	history = HistoryKnowledge(history_events, _move_observations(history_events), (), (), (), ())
+
 	roster_values = [_mapping(item, "opponent.team item") for item in _array(opponent, "team")]
 	opponent_active_mapping = _required_mapping(opponent, "active")
 	unknown_positions = set(opponent_active_mapping) - {"left", "right"}
@@ -405,17 +412,17 @@ def build_knowledge_state(state: Mapping[str, Any]) -> KnowledgeState:
 		_mapping(opponent_active_mapping[position], f"opponent.active.{position}")
 		for position in ("left", "right") if position in opponent_active_mapping
 	]
-	confirmed = [active["team_id"] for active in active_values if active.get("team_id") is not None]
+
+	opponent_side, ots_moves = _open_team_sheet_metadata(history_events, roster_values)
+	confirmed = {active["team_id"] for active in active_values if active.get("team_id") is not None}
+	confirmed.update(_confirmed_selected_from_history(history_events, roster_values, opponent_side))
 	selection = selected_four_statuses((item["id"] for item in roster_values), confirmed)
-	opponent_roster = tuple(_build_opponent_roster(item, selection[item["id"]]) for item in roster_values)
+	opponent_roster = tuple(
+		_build_opponent_roster(item, selection[item["id"]], ots_moves.get(item["id"]))
+		for item in roster_values
+	)
 	opponent_active = tuple(_build_opponent_active(item) for item in active_values)
 
-	history_events = tuple(
-		PublicHistoryEvent(index, event["turn"], event["type"], canonical_json(event.get("data", {})), event["raw"])
-		for index, event_value in enumerate(_array(state, "history"))
-		for event in (_mapping(event_value, "history event"),)
-	)
-	history = HistoryKnowledge(history_events, _move_observations(history_events), (), (), (), ())
 	field = FieldKnowledge(
 		KnowledgeFact.observed(field_state.get("weather")),
 		KnowledgeFact.observed(field_state.get("weather_started_turn")),
@@ -442,12 +449,29 @@ def _build_own_pokemon(value: Mapping[str, Any]) -> OwnPokemonKnowledge:
 	)
 
 
-def _build_opponent_roster(value: Mapping[str, Any], selected: SelectedFourStatus) -> OpponentRosterKnowledge:
+def _build_opponent_roster(
+	value: Mapping[str, Any], selected: SelectedFourStatus, ots_move_ids: set[str] | None
+) -> OpponentRosterKnowledge:
+	moves = []
+	for move in value.get("moves", []):
+		move_id = _normalize_id(move["id"])
+		if ots_move_ids is None:
+			# In schema-v2 Champions states opponent.team originates from OTS. A valid
+			# full history also contains showteam; this fallback preserves that contract
+			# for synthetic/minimized fixtures that omit the handshake event.
+			sources = (KnowledgeSource.OPEN_TEAM_SHEET,)
+		elif move_id in ots_move_ids:
+			sources = (KnowledgeSource.OPEN_TEAM_SHEET,)
+		else:
+			# The harness appends only publicly observed moves to the immutable OTS roster.
+			# Absence from the original showteam payload therefore means observed-in-battle,
+			# not submitted-set knowledge.
+			sources = (KnowledgeSource.BATTLE_HISTORY,)
+		moves.append(MoveKnowledge(move["id"], move["name"], sources))
 	return OpponentRosterKnowledge(
 		value["id"], value["species"], value["name"], value.get("item"), value.get("ability"),
 		value.get("tera_type"), value.get("nature"), value.get("gender"), value.get("level"),
-		tuple(MoveKnowledge(move["id"], move["name"], (KnowledgeSource.OPEN_TEAM_SHEET,)) for move in value.get("moves", [])),
-		selected, KnowledgeSource.OPEN_TEAM_SHEET,
+		tuple(moves), selected, KnowledgeSource.OPEN_TEAM_SHEET,
 	)
 
 
@@ -485,6 +509,92 @@ def _move_observations(events: tuple[PublicHistoryEvent, ...]) -> tuple[MoveObse
 			continue
 		result.append(MoveObservation(event.turn, event.index, str(args[0]), str(args[1]), str(args[2]) if len(args) > 2 else None))
 	return tuple(result)
+
+
+def _open_team_sheet_metadata(
+	events: tuple[PublicHistoryEvent, ...], roster: list[Mapping[str, Any]]
+) -> tuple[str | None, dict[str, set[str]]]:
+	"""Recover immutable OTS move membership and the opponent side from public showteam history."""
+	for event in events:
+		if event.type != "showteam":
+			continue
+		args = event.data.get("args", [])
+		if not isinstance(args, list) or len(args) < 2 or not isinstance(args[0], str):
+			continue
+		packed = "|".join(str(part) for part in args[1:])
+		sets = _parse_packed_team_summary(packed)
+		if len(sets) != len(roster):
+			continue
+		if any(_normalize_id(species) != _normalize_id(item.get("species")) for (species, _), item in zip(sets, roster)):
+			continue
+		return args[0], {
+			item["id"]: move_ids
+			for item, (_, move_ids) in zip(roster, sets)
+		}
+	return None, {}
+
+
+def _parse_packed_team_summary(packed: str) -> list[tuple[str, set[str]]]:
+	"""Parse only public species and move IDs from Showdown's packed-team wire format."""
+	result = []
+	if not packed:
+		return result
+	for packed_set in packed.split("]"):
+		fields = packed_set.split("|")
+		if len(fields) < 5:
+			return []
+		species = fields[1] or fields[0]
+		moves = {_normalize_id(move) for move in fields[4].split(",") if move}
+		result.append((species, moves))
+	return result
+
+
+def _confirmed_selected_from_history(
+	events: tuple[PublicHistoryEvent, ...], roster: list[Mapping[str, Any]], opponent_side: str | None
+) -> set[str]:
+	"""Reconstruct selected-four confirmations from the public timeline without persistent process memory."""
+	if opponent_side is None:
+		return set()
+	confirmed: set[str] = set()
+	has_illusion = any(_normalize_id(item.get("ability")) == "illusion" for item in roster)
+	for event in events:
+		if event.type not in ("switch", "drag", "replace"):
+			continue
+		args = event.data.get("args", [])
+		if not isinstance(args, list) or len(args) < 2 or not isinstance(args[0], str):
+			continue
+		if not args[0].startswith(f"{opponent_side}"):
+			continue
+		# While an Illusion user remains possible, ordinary switch/drag appearances do
+		# not prove roster identity. A public replace event is the explicit reveal.
+		if has_illusion and event.type != "replace":
+			continue
+		matched = _match_roster_from_public_identity(args[0], str(args[1]), roster)
+		if matched is not None:
+			confirmed.add(matched)
+	return confirmed
+
+
+def _match_roster_from_public_identity(
+	ident: str, details: str, roster: list[Mapping[str, Any]]
+) -> str | None:
+	name = ident.split(":", 1)[1].strip() if ":" in ident else ""
+	species = details.split(",", 1)[0].strip()
+	name_id = _normalize_id(name)
+	species_id = _normalize_id(species)
+	matches = {
+		item["id"]
+		for item in roster
+		if (name_id and _normalize_id(item.get("name")) == name_id) or
+		(species_id and _normalize_id(item.get("species")) == species_id)
+	}
+	return next(iter(matches)) if len(matches) == 1 else None
+
+
+def _normalize_id(value: Any) -> str:
+	if not isinstance(value, str):
+		return ""
+	return "".join(character.lower() for character in value if character.isalnum())
 
 
 def _sorted_number_pairs(value: Mapping[str, Any]) -> tuple[tuple[str, int], ...]:
