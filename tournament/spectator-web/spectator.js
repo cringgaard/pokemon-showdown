@@ -16,13 +16,22 @@ function battleScale(width) {
 	return Math.max(0.1, width / 640);
 }
 
-function playbackAcknowledgementGeneration(mode, presentation, rendererState) {
-	if (mode !== 'event' || presentation?.kind !== 'live' || rendererState !== 'ended') return null;
-	return protocolGeneration(presentation);
+function playbackAcknowledgementGeneration(mode, presentation, rendererState, activeGeneration = null) {
+	if (mode !== 'event' || rendererState !== 'ended') return null;
+	if (presentation?.kind === 'live') return protocolGeneration(presentation);
+	return Number.isSafeInteger(activeGeneration) && activeGeneration >= 0 ? activeGeneration : null;
+}
+
+function playbackControlIsCurrent(rendererGeneration, currentVersion, playback) {
+	return playback && playback.protocol_generation === rendererGeneration &&
+		Number.isSafeInteger(playback.version) && playback.version > currentVersion;
 }
 
 if (typeof module !== 'undefined' && module.exports) {
-	module.exports = { battleScale, playbackAcknowledgementGeneration, protocolGeneration, rendererNeedsReload };
+	module.exports = {
+		battleScale, playbackAcknowledgementGeneration, playbackControlIsCurrent,
+		protocolGeneration, rendererNeedsReload,
+	};
 }
 
 (function () {
@@ -33,13 +42,18 @@ if (typeof module !== 'undefined' && module.exports) {
 		'idle-title', 'idle-subtitle', 'idle-next', 'intro-stage', 'intro-p1', 'intro-p2', 'intro-score',
 		'live-score', 'result-stage', 'result-copy', 'result-score', 'standings-stage', 'standings-body',
 		'next-match', 'between-score', 'champion-name', 'champion-score', 'champion-note', 'renderer-warning',
+		'team-sheet-name', 'team-sheet-grid', 'preview-p1-name', 'preview-p2-name',
+		'preview-p1-roster', 'preview-p2-roster', 'preview-status-title',
 	].map(id => [id, document.getElementById(id)]));
 	let battle;
 	let sequence = config.sequence;
 	let rendererGeneration = protocolGeneration(config.presentation);
 	let rendererGameID = config.presentation?.game_id || null;
+	let livePlaybackGeneration = Number.isSafeInteger(config.playback?.protocol_generation) ?
+		config.playback.protocol_generation : (config.presentation?.kind === 'live' ? rendererGeneration : null);
 	const acknowledgedGenerations = new Set();
 	const acknowledgementInFlight = new Set();
+	let playbackVersion = -1;
 
 	function text(id, value) {
 		elements[id].textContent = value == null ? '' : String(value);
@@ -76,6 +90,64 @@ if (typeof module !== 'undefined' && module.exports) {
 		}
 	}
 
+	function pokemonImage(pokemon) {
+		const image = document.createElement('img');
+		image.src = `https://play.pokemonshowdown.com/sprites/gen5/${encodeURIComponent(pokemon.sprite)}.png`;
+		image.alt = '';
+		return image;
+	}
+
+	function renderTeamCard(pokemon) {
+		const card = document.createElement('article');
+		card.className = 'team-card';
+		const top = document.createElement('div');
+		top.className = 'team-card-top';
+		top.appendChild(pokemonImage(pokemon));
+		const heading = document.createElement('h2');
+		heading.textContent = pokemon.name === pokemon.species ? pokemon.species : `${pokemon.name} (${pokemon.species})`;
+		top.appendChild(heading);
+		card.appendChild(top);
+		const facts = document.createElement('div');
+		facts.className = 'team-card-facts';
+		for (const [label, value] of [['Ability', pokemon.ability], ['Item', pokemon.item || 'No item']]) {
+			const row = document.createElement('div');
+			const key = document.createElement('span');
+			key.textContent = label;
+			const detail = document.createElement('strong');
+			detail.textContent = value;
+			row.append(key, detail);
+			facts.appendChild(row);
+		}
+		card.appendChild(facts);
+		const moves = document.createElement('ul');
+		for (const move of pokemon.moves) {
+			const item = document.createElement('li');
+			item.textContent = move;
+			moves.appendChild(item);
+		}
+		card.appendChild(moves);
+		return card;
+	}
+
+	function renderTeamSheet(team) {
+		text('team-sheet-name', team?.participant?.name || 'Team');
+		elements['team-sheet-grid'].replaceChildren(...(team?.pokemon || []).map(renderTeamCard));
+	}
+
+	function renderPreviewSide(side, team) {
+		text(`preview-${side}-name`, team?.participant?.name || side.toUpperCase());
+		const roster = elements[`preview-${side}-roster`];
+		roster.replaceChildren(...(team?.pokemon || []).map(pokemon => {
+			const tile = document.createElement('div');
+			tile.className = 'preview-pokemon';
+			tile.appendChild(pokemonImage(pokemon));
+			const name = document.createElement('strong');
+			name.textContent = pokemon.species;
+			tile.appendChild(name);
+			return tile;
+		}));
+	}
+
 	function sizeBattleRenderer() {
 		const wrapper = document.querySelector('.replay-wrapper');
 		if (!wrapper?.clientWidth) return;
@@ -106,9 +178,25 @@ if (typeof module !== 'undefined' && module.exports) {
 		text('between-score', scoreText(state));
 		text('champion-name', participantName(state.winner, 'Champion'));
 		text('champion-score', scoreText(state));
+		const sheet = state.team_sheet_side && state.teams?.[state.team_sheet_side];
+		if (sheet) renderTeamSheet(sheet);
+		renderPreviewSide('p1', state.teams?.p1);
+		renderPreviewSide('p2', state.teams?.p2);
+		text('preview-status-title', state.kind === 'selection_locked' ? 'Selection locked' : 'Selecting teams...');
 		text('champion-note', state.champion_reason === 'tie_safety_limit' ? 'Final tie safety limit reached · top qualifier advances' : 'Congratulations');
 		renderStandings(state.standings);
 		if (battle) text('turn-label', battle.turn > 0 ? `Turn ${battle.turn}` : 'Team Preview');
+	}
+
+	function applyPlayback(playback, force = false) {
+		if (!battle || !playback) return;
+		if (!force && !playbackControlIsCurrent(rendererGeneration, playbackVersion, playback)) return;
+		if (playback.protocol_generation !== rendererGeneration) return;
+		playbackVersion = playback.version;
+		config.playback = playback;
+		Replays.changeSetting('speed', playback.speed);
+		if (playback.paused) Replays.pause();
+		else if (config.presentation?.kind === 'live') Replays.play();
 	}
 
 	async function refreshState() {
@@ -116,13 +204,16 @@ if (typeof module !== 'undefined' && module.exports) {
 			const response = await fetch('/api/spectator');
 			const state = await response.json();
 			if (state.presentation) config.presentation = state.presentation;
+			if (state.playback) applyPlayback(state.playback);
 			config.complete = state.complete;
 			updateShell();
 		} catch {}
 	}
 
 	async function acknowledgePlayback(rendererState) {
-		const generation = playbackAcknowledgementGeneration(config.mode, config.presentation, rendererState);
+		const generation = playbackAcknowledgementGeneration(
+			config.mode, config.presentation, rendererState, livePlaybackGeneration
+		);
 		if (generation === null || acknowledgedGenerations.has(generation) || acknowledgementInFlight.has(generation)) return;
 		acknowledgementInFlight.add(generation);
 		while (!acknowledgedGenerations.has(generation)) {
@@ -137,7 +228,9 @@ if (typeof module !== 'undefined' && module.exports) {
 				acknowledgedGenerations.add(generation);
 				break;
 			} catch {
-				if (config.presentation?.kind !== 'live' || protocolGeneration(config.presentation) !== generation) break;
+				if (config.playback?.protocol_generation !== generation && (
+					config.presentation?.kind !== 'live' || protocolGeneration(config.presentation) !== generation
+				)) break;
 				await new Promise(resolve => { window.setTimeout(resolve, 1000); });
 			}
 		}
@@ -155,9 +248,10 @@ if (typeof module !== 'undefined' && module.exports) {
 		rendererGeneration = protocolGeneration(presentation) ?? rendererGeneration;
 		if (presentation.game_id) rendererGameID = presentation.game_id;
 		config.presentation = presentation;
+		if (enteringLive) livePlaybackGeneration = protocolGeneration(presentation);
 		updateShell();
 		if (enteringLive) window.setTimeout(sizeBattleRenderer, 0);
-		if (enteringLive && battle?.paused) battle.play();
+		if (enteringLive) applyPlayback(config.playback, true);
 	}
 
 	function connect() {
@@ -169,7 +263,7 @@ if (typeof module !== 'undefined' && module.exports) {
 			sequence = entry.sequence;
 			const chunk = entry.chunk || '';
 			for (const line of chunk.split('\n')) if (line && battle) battle.add(line);
-			if (battle?.paused && config.presentation?.kind === 'live') battle.play();
+			if (battle?.paused && config.presentation?.kind === 'live' && !config.playback?.paused) battle.play();
 			updateShell();
 		});
 		events.addEventListener('presentation', event => {
@@ -178,6 +272,7 @@ if (typeof module !== 'undefined' && module.exports) {
 			sequence = entry.sequence;
 			if (entry.presentation) acceptPresentation(entry.presentation);
 		});
+		events.addEventListener('playback', event => applyPlayback(JSON.parse(event.data)));
 		events.addEventListener('complete', () => {
 			text('connection-label', 'Complete');
 			void refreshState();
@@ -202,10 +297,10 @@ if (typeof module !== 'undefined' && module.exports) {
 				void refreshState();
 			}
 		});
-		Replays.changeSetting('speed', 'fast');
+		applyPlayback(config.playback, true);
 		sizeBattleRenderer();
 		updateShell();
-		if (config.presentation?.kind === 'live') battle.play();
+		if (config.presentation?.kind === 'live' && !config.playback?.paused) battle.play();
 		if (config.mode !== 'replay') connect();
 		else text('connection-label', 'Saved replay');
 	}

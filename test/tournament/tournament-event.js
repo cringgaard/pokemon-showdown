@@ -11,7 +11,7 @@ const { TournamentEventServer } = require('../../dist/tournament/spectator/event
 const { TournamentEventStore } = require('../../dist/tournament/spectator/event-store');
 const { renderViewerHTML } = require('../../dist/tournament/spectator/server');
 const {
-	battleScale, playbackAcknowledgementGeneration, protocolGeneration, rendererNeedsReload,
+	battleScale, playbackAcknowledgementGeneration, playbackControlIsCurrent, protocolGeneration, rendererNeedsReload,
 } = require('../../tournament/spectator-web/spectator');
 
 describe('Tournament event reconstruction and presentation shell', function () {
@@ -141,7 +141,7 @@ describe('Tournament event reconstruction and presentation shell', function () {
 		store.publish('|start');
 		const pacing = new TournamentPacingController(store, false);
 		server = new TournamentEventServer({
-			store, pacing, playback: new TournamentPlaybackController({ autoComplete: true }), port: 0,
+			store, pacing, playback: new TournamentPlaybackController({ autoComplete: true }), teams: teamSheets(), port: 0,
 		});
 		await server.listen();
 
@@ -160,7 +160,7 @@ describe('Tournament event reconstruction and presentation shell', function () {
 		const store = new TournamentEventStore(presentation('intro'));
 		const pacing = new TournamentPacingController(store, false);
 		const playback = new TournamentPlaybackController({ timeoutMs: 5000 });
-		server = new TournamentEventServer({ store, pacing, playback, port: 0 });
+		server = new TournamentEventServer({ store, pacing, playback, teams: teamSheets(), port: 0 });
 		await server.listen();
 		let resolved = false;
 		void pacing.wait(presentation('intro'), presentation('standings')).then(() => { resolved = true; });
@@ -186,7 +186,7 @@ describe('Tournament event reconstruction and presentation shell', function () {
 		store.publish('|start\n|turn|1\n|win|Alice');
 		const pacing = new TournamentPacingController(store, false);
 		const playback = new TournamentPlaybackController({ timeoutMs: 5000 });
-		server = new TournamentEventServer({ store, pacing, playback, port: 0 });
+		server = new TournamentEventServer({ store, pacing, playback, teams: teamSheets(), port: 0 });
 		await server.listen();
 		playback.beginGeneration(store.presentation.protocol_generation);
 		const pending = playback.waitForCompletion(store.presentation.protocol_generation);
@@ -209,10 +209,59 @@ describe('Tournament event reconstruction and presentation shell', function () {
 		assert.equal(playbackAcknowledgementGeneration('event', live, 'ended'), 7);
 		assert.equal(playbackAcknowledgementGeneration('event', live, 'playing'), null);
 		assert.equal(playbackAcknowledgementGeneration('event', presentation('result'), 'ended'), null);
+		assert.equal(playbackAcknowledgementGeneration('event', presentation('team_sheet'), 'ended', 7), 7);
 		assert.equal(playbackAcknowledgementGeneration('replay', live, 'ended'), null);
 	});
 
-	for (const kind of ['idle', 'intro', 'live', 'result', 'standings', 'champion']) {
+	it('applies only newer generation-scoped playback controls', () => {
+		assert.equal(playbackControlIsCurrent(7, 2, { protocol_generation: 7, version: 3 }), true);
+		assert.equal(playbackControlIsCurrent(7, 3, { protocol_generation: 7, version: 3 }), false);
+		assert.equal(playbackControlIsCurrent(7, 2, { protocol_generation: 6, version: 9 }), false);
+	});
+
+	it('keeps pause and speed state server-owned, idempotent, and generation-aware', async () => {
+		const store = new TournamentEventStore({ ...presentation('live'), protocol_generation: 1 });
+		const pacing = new TournamentPacingController(store, false);
+		const playback = new TournamentPlaybackController({ timeoutMs: 5000 });
+		server = new TournamentEventServer({ store, pacing, playback, teams: teamSheets(), port: 0 });
+		await server.listen();
+		playback.beginGeneration(1);
+		assert.deepEqual(JSON.parse(await requestJSON(`${server.url()}api/playback-control`, {
+			action: 'pause', protocol_generation: 1,
+		})), { accepted: true, duplicate: false, stale: false });
+		assert.deepEqual(JSON.parse(await requestJSON(`${server.url()}api/playback-control`, {
+			action: 'pause', protocol_generation: 1,
+		})), { accepted: false, duplicate: true, stale: false });
+		assert.deepEqual(JSON.parse(await requestJSON(`${server.url()}api/playback-control`, {
+			action: 'speed', speed: 'normal', protocol_generation: 0,
+		})), { accepted: false, duplicate: false, stale: true });
+		assert.equal(playback.status().paused, true);
+		assert.equal(playback.status().speed, 'fast');
+		await requestJSON(`${server.url()}api/playback-control`, {
+			action: 'speed', speed: 'normal', protocol_generation: 1,
+		});
+		assert.equal(playback.status().speed, 'normal');
+	});
+
+	it('serves stable and current-pairing public team-sheet pages across refreshes', async () => {
+		const state = presentation('live');
+		const store = new TournamentEventStore(state);
+		const pacing = new TournamentPacingController(store, false);
+		pacing.setPrimary(state);
+		server = new TournamentEventServer({
+			store, pacing, playback: new TournamentPlaybackController(), teams: teamSheets(), port: 0,
+		});
+		await server.listen();
+		for (const route of ['teams/a', 'current/p1/team', 'current/p2/team']) {
+			const first = await requestText(`${server.url()}${route}`);
+			const refreshed = await requestText(`${server.url()}${route}`);
+			assert.equal(refreshed, first);
+			assert(first.includes('team-card-grid'));
+			assert(!/EVs|IVs|Nature|calculated stats/i.test(first));
+		}
+	});
+
+	for (const kind of ['idle', 'intro', 'team_sheet', 'team_preview', 'selection_locked', 'live', 'result', 'standings', 'champion']) {
 		it(`renders the ${kind} state in the shared official-renderer shell`, () => {
 			const html = renderViewerHTML({
 				mode: 'event', presentation: presentation(kind), complete: kind === 'champion', sequence: 1,
@@ -235,8 +284,20 @@ function presentation(kind) {
 		stage_label: 'Round Robin',
 		p1: { id: 'a', name: 'A Participant Name That Is Deliberately Very Long' },
 		p2: { id: 'b', name: 'Bob' },
+		teams: { p1: teamSheets().get('a'), p2: teamSheets().get('b') },
 		standings: [{ rank: 1, name: 'Alice', wins: 1, losses: 0, ties: 0, points: 1 }],
 	};
+}
+
+function teamSheets() {
+	const pokemon = Array.from({ length: 6 }, (_, index) => ({
+		name: `Pokemon ${index}`, species: 'Incineroar', sprite: 'incineroar', item: 'Sitrus Berry',
+		ability: 'Intimidate', moves: ['Fake Out', 'Flare Blitz', 'Knock Off', 'Protect'],
+	}));
+	return new Map([
+		['a', { participant: { id: 'a', name: 'Alice' }, pokemon }],
+		['b', { participant: { id: 'b', name: 'Bob' }, pokemon }],
+	]);
 }
 
 function requestText(url, method = 'GET') {

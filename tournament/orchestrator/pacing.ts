@@ -13,12 +13,21 @@ export class TournamentPacingController {
 	}
 
 	wait(primary: TournamentPresentationState, standings?: TournamentPresentationState) {
-		this.primary = primary;
-		this.standings = standings || null;
+		this.setPrimary(primary, standings);
 		if (this.autoAdvance) return Promise.resolve();
 		return new Promise<void>(resolve => {
 			this.resolver = resolve;
 		});
+	}
+
+	setPrimary(primary: TournamentPresentationState, standings?: TournamentPresentationState) {
+		this.primary = primary;
+		this.standings = standings || null;
+	}
+
+	show(presentation: TournamentPresentationState) {
+		this.eventStore.publishPresentation(presentation);
+		return true;
 	}
 
 	advance() {
@@ -39,6 +48,10 @@ export class TournamentPacingController {
 		if (!this.primary) return false;
 		this.eventStore.publishPresentation(this.primary);
 		return true;
+	}
+
+	primaryState() {
+		return this.primary;
 	}
 
 	status() {
