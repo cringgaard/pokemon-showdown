@@ -88,8 +88,11 @@ describe('Tournament player-visible protocol tracking', () => {
 		tracker.consume([
 			`|showteam|p2|${opponentTeam}`,
 			'|switch|p2a: Moth|Volcarona, L50|100/100',
-			'|-start|p2a: Moth|typechange|Water|[from] move: Soak',
+			"|-start|p2a: Moth|typeadd|Ghost|[from] move: Trick-or-Treat",
 		].join('\n'));
+		assert.deepEqual(tracker.opponentActive.right.types, ['Bug', 'Fire', 'Ghost']);
+
+		tracker.consume('|-start|p2a: Moth|typechange|Water|[from] move: Soak');
 		assert.deepEqual(tracker.opponentActive.right.types, ['Water']);
 
 		tracker.consume("|-start|p2a: Moth|typeadd|Ghost|[from] move: Trick-or-Treat");
@@ -120,6 +123,8 @@ describe('Tournament player-visible protocol tracking', () => {
 		tracker.consume('|-start|p2a: Dragon|typechange|[from] move: Reflect Type|[of] p1a: Hidden');
 		assert.equal(tracker.opponentActive.right.types, null);
 		tracker.consume('|-start|p2a: Dragon|typechange|Water|[from] move: Soak');
+		assert.deepEqual(tracker.opponentActive.right.types, ['Water']);
+		tracker.consume("|-start|p2a: Dragon|typeadd|Ghost|[from] move: Trick-or-Treat");
 		assert.deepEqual(tracker.opponentActive.right.types, ['Water', 'Ghost']);
 
 		tracker.consume('|replace|p2a: Mask|Zoroark, L50|100/100');

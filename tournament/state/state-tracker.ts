@@ -378,6 +378,10 @@ export class StateTracker {
 		const knowledge = this.typeKnowledge(active);
 		const types = this.parsePublicTypes(value);
 		if (effect === 'typechange') {
+			if (started) {
+				knowledge.added.clear();
+				knowledge.addedUnknown = false;
+			}
 			knowledge.replacement = started ? types : undefined;
 		} else if (started) {
 			if (!types) {
