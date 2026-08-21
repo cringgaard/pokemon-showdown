@@ -4,7 +4,7 @@ Status: implementation specification for the first working vertical slice.
 
 This document defines the architecture and public bot API for a headless Pokémon Showdown bot tournament. The tournament uses Pokémon Showdown as the authoritative battle simulator and exposes a stable Python interface to participant bots.
 
-The first milestone is intentionally narrow: two bundled Python reference bots must be able to play complete deterministic VGC-style Doubles matches through the same interface that participants will use.
+The first milestone is intentionally narrow: two bundled Python reference bots must be able to play complete deterministic Champions VGC Doubles matches through the same interface that participants will use.
 
 ## 1. Goals
 
@@ -91,7 +91,9 @@ Do not directly expose `Battle`, `Side`, `Pokemon`, or other simulator objects t
 
 Use explicit battle seeds for reproducibility.
 
-The initial development format may use an existing Gen 9 VGC-compatible format, but tournament code must refer to a configurable format ID rather than hardcoding regulation-specific assumptions. A later custom format should use VGC-style Doubles rules and `Force Open Team Sheets` so no human OTS acceptance interaction is required.
+The production default is the exact `[Gen 9 Champions] VGC 2026 Reg M-B` format (`gen9championsvgc2026regmb`). The format remains configurable. For its consensual `Open Team Sheets` rule, the headless runner explicitly issues the simulator's OTS acceptance command during Team Preview; it does not alter the format ID or duplicate sheet data itself.
+
+Resolve mechanics data with `Dex.forFormat(configuredFormat)` wherever format semantics matter. Record the resolved mod in bot-visible battle metadata.
 
 ## 5. Participant submission contract
 
@@ -196,6 +198,7 @@ export interface BotState {
 
 export interface BattleInfo {
     format: string;
+    mod: string;
     turn: number;
     phase: BattlePhase;
 }
@@ -246,6 +249,18 @@ export interface KnownMove {
     name: string;
 }
 
+export type TransformationKind =
+    'mega' | 'mega_x' | 'mega_y' | 'ultra' | 'dynamax' | 'terastallize';
+
+export interface TransformationState {
+    kind: TransformationKind;
+}
+
+export interface TransformationOption {
+    kind: TransformationKind;
+    result_species?: string;
+}
+
 export interface OwnPokemonState {
     id: OwnPokemonID;
     species: string;
@@ -256,8 +271,8 @@ export interface OwnPokemonState {
     level: number;
     item: string | null;
     ability: string;
-    tera_type: string;
-    terastallized: boolean;
+    types: string[];
+    transformation: TransformationState | null;
     stats: Stats;
     boosts: Boosts;
     moves: KnownMove[];
@@ -267,7 +282,7 @@ export interface OwnPokemonState {
 
 Do not invent precision for opponents. If Showdown reports opponent HP as a percentage/fraction rather than exact HP, preserve that censorship through `exact: false`.
 
-Open Team Sheets should expose only information publicly available under the chosen format. Do not expose EVs, IVs, hidden exact stats or other simulator-only information.
+Open Team Sheets expose only information publicly available under the chosen format. Champions sheets contain species, item, ability, moves, nature, gender, level, and an inert submitted Tera type. They must not expose stats, Stat Points/EVs, IVs, or other simulator-only information. Sheet fields remain immutable set metadata; current active form, types, ability, and transformation are tracked separately from player-visible protocol.
 
 ## 9. Active positions
 
@@ -319,7 +334,7 @@ export interface MoveAction {
     type: 'move';
     move: string;
     target?: Target;
-    terastallize?: boolean;
+    transformation?: TransformationKind;
 }
 
 export interface SwitchAction {
@@ -362,9 +377,11 @@ export interface SlotRequest {
     moves: MoveOption[];
     switches: OwnPokemonID[];
     revives: OwnPokemonID[];
-    can_terastallize: boolean;
+    available_transformations: TransformationOption[];
 }
 ```
+
+`TransformationOption` contains `kind` and may contain `result_species` when that result follows from public request/set data. Champions requests expose ordinary `mega`; Charizard and Raichu X/Y stones do not use `mega_x` or `mega_y`. Tera type on a Champions OTS entry is not transformation availability.
 
 The participant API does not expose `pass`. If Showdown requires a pass for a fainted/non-acting slot, the adapter inserts it.
 
@@ -412,14 +429,14 @@ It should:
 
 1. derive legal per-slot move/switch options from the latest Showdown request;
 2. expand explicit move target choices;
-3. optionally expand Tera variants where allowed;
+3. expand transformation variants only where the current Showdown request allows them;
 4. create the Cartesian product for required slots;
 5. filter invalid cross-slot combinations.
 
 Cross-slot constraints include at minimum:
 
 - both slots cannot switch into the same bench Pokémon;
-- both slots cannot Terastallize in the same turn;
+- both slots cannot consume the same side-wide transformation resource in one turn;
 - required slots must act;
 - inactive/non-required slots must not provide participant actions;
 - forced-switch requests may contain one or two required positions.
@@ -435,7 +452,7 @@ Participant responses should first be structurally validated and canonicalized. 
 The adapter then translates semantic actions into Showdown choice strings, for example conceptually:
 
 ```text
-move fakeout +1, move surgingstrikes +2 terastallize
+move protect mega, move fakeout +1
 ```
 
 Participants must never need to produce this syntax themselves.
@@ -651,7 +668,7 @@ Participant/harness-invalid examples:
 - unknown move ID;
 - illegal target;
 - duplicate switch-in;
-- double Tera;
+- duplicate use of a side-wide transformation resource;
 - response not matching a legal action.
 
 These increment invalid attempts.
@@ -841,7 +858,7 @@ Cover at minimum:
 - weather;
 - Tailwind/side conditions;
 - Trick Room/terrain field conditions;
-- Tera/form changes;
+- transformation/form changes, including public `-mega` state;
 - Illusion `replace` reconciliation;
 - unknown protocol lines do not crash parsing/tracking.
 
@@ -854,7 +871,9 @@ Cover at minimum:
 - spread/self moves with no explicit target;
 - move + switch combinations;
 - duplicate switch target filtering;
-- single Tera only;
+- only one side-wide Mega selection across both active slots;
+- no transformation after the authoritative request removes availability;
+- format-aware move/form/type/ability metadata;
 - fainted/non-required slot handling;
 - single forced switch;
 - double forced switch;
@@ -892,7 +911,7 @@ Milestone 1 is complete when all of the following are true:
 3. Both sides are controlled by persistent Python subprocesses using JSONL.
 4. Both Python bots expose only `choose_action(state)`.
 5. Team Preview is performed through the public API using bring-6/pick-4 ordering.
-6. Normal Doubles turns support two simultaneous actions, move targets, switches and Tera.
+6. Normal Doubles turns support two simultaneous actions, move targets, switches and request-authorized transformations.
 7. Forced switch requests can be completed.
 8. `request.legal_actions` is generated and used for validation.
 9. RandomBot can play complete battles using only `legal_actions`.

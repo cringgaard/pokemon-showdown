@@ -5,7 +5,7 @@ import { MatchRunner } from './match/match-runner';
 async function main() {
 	const root = path.resolve(__dirname, '..');
 	const sourceRoot = path.basename(root) === 'dist' ? path.dirname(root) : root;
-	const team = fs.readFileSync(path.join(sourceRoot, 'tournament/fixtures/teams/vgc-reg-i.txt'), 'utf8');
+	const team = fs.readFileSync(path.join(sourceRoot, 'tournament/fixtures/teams/champions-snow.txt'), 'utf8');
 	const randomBot = path.join(sourceRoot, 'tournament/reference-bots/random/main.py');
 	const result = await new MatchRunner({
 		seed: '1,2,3,4',

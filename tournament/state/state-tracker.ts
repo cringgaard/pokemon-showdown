@@ -1,4 +1,4 @@
-import { Dex } from '../../sim/dex';
+import { Dex, type ModdedDex } from '../../sim/dex';
 import { Teams } from '../../sim/teams';
 import type { ChoiceRequest } from '../../sim/side';
 import type {
@@ -11,6 +11,7 @@ const OPPONENT_SLOT_TO_POSITION: Record<string, Position> = { a: 'right', b: 'le
 
 export class StateTracker {
 	readonly sideID: SideID;
+	readonly dex: ModdedDex;
 	turn = 0;
 	started = false;
 	winner: string | null = null;
@@ -33,8 +34,9 @@ export class StateTracker {
 	private readonly opponentCurrentItems = new Map<OpponentPokemonID, string | null>();
 	private opponentHasIllusion = false;
 
-	constructor(sideID: SideID) {
+	constructor(sideID: SideID, format = 'gen9') {
 		this.sideID = sideID;
+		this.dex = Dex.forFormat(format);
 	}
 
 	consume(chunk: string) {
@@ -98,6 +100,7 @@ export class StateTracker {
 		case 'swap': this.applySwap(event); break;
 		case 'detailschange':
 		case '-formechange': this.applyDetailsChange(event); break;
+		case '-mega': this.applyTransformation(event, 'mega'); break;
 		case '-terastallize': this.applyTerastallize(event); break;
 		case 'move': this.applyMove(event); break;
 		case 'faint': this.applyFaint(event); break;
@@ -144,10 +147,13 @@ export class StateTracker {
 			id: opponentPokemonID(index),
 			name: set.name || set.species,
 			species: set.species,
-			item: set.item ? Dex.toID(set.item) : null,
-			ability: set.ability ? Dex.toID(set.ability) : null,
+			item: set.item ? this.dex.toID(set.item) : null,
+			ability: set.ability ? this.dex.toID(set.ability) : null,
 			teraType: set.teraType || null,
-			moves: set.moves.map(id => ({ id: Dex.moves.get(id).id, name: Dex.moves.get(id).name })),
+			nature: set.nature || null,
+			gender: set.gender || null,
+			level: set.level || null,
+			moves: set.moves.map(id => ({ id: this.dex.moves.get(id).id, name: this.dex.moves.get(id).name })),
 		})));
 		this.opponentCurrentItems.clear();
 		for (const pokemon of this.opponentTeam) this.opponentCurrentItems.set(pokemon.id, pokemon.item);
@@ -163,6 +169,7 @@ export class StateTracker {
 		}
 		const position = OPPONENT_SLOT_TO_POSITION[ident.slot];
 		const apparentSpecies = speciesFromDetails(event.args[1] || ident.name);
+		const species = this.dex.species.get(apparentSpecies);
 		const matched = this.opponentHasIllusion ? null : this.findOpponent(apparentSpecies, ident.name);
 		this.opponentActive[position] = {
 			position,
@@ -175,7 +182,8 @@ export class StateTracker {
 			fainted: (event.args[2] || '').endsWith(' fnt'),
 			item: matched ? this.currentOpponentItem(matched) : null,
 			ability: matched?.ability || null,
-			terastallized: false,
+			types: [...species.types],
+			transformation: transformationForSpecies(species),
 			boosts: { ...EMPTY_BOOSTS },
 			volatiles: new Set(),
 		};
@@ -189,6 +197,7 @@ export class StateTracker {
 		active.teamID = matched?.id || null;
 		active.item = matched ? this.currentOpponentItem(matched) : active.item;
 		active.ability = matched?.ability || active.ability;
+		this.applyPublicForm(active);
 	}
 
 	private applySwap(event: ProtocolEvent) {
@@ -209,19 +218,31 @@ export class StateTracker {
 		const active = this.activeFor(event.args[0]);
 		if (!active) return;
 		active.apparentSpecies = speciesFromDetails(event.args[1] || active.apparentSpecies);
-		if (event.type === '-formechange' && effectID(event.args[1]) === 'terastallized') active.terastallized = true;
+		this.applyPublicForm(active);
+		if (event.type === '-formechange' && effectID(event.args[1]) === 'terastallized') {
+			active.transformation = { kind: 'terastallize' };
+		}
 	}
 
 	private applyTerastallize(event: ProtocolEvent) {
 		const active = this.activeFor(event.args[0]);
-		if (active) active.terastallized = true;
+		if (!active) return;
+		active.transformation = { kind: 'terastallize' };
+		if (event.args[1]) active.types = [event.args[1]];
+	}
+
+	private applyTransformation(event: ProtocolEvent, kind: 'mega') {
+		const active = this.activeFor(event.args[0]);
+		if (!active) return;
+		active.transformation = { kind };
+		this.applyPublicForm(active);
 	}
 
 	private applyMove(event: ProtocolEvent) {
 		const active = this.activeFor(event.args[0]);
 		if (!active?.teamID) return;
 		const pokemon = this.opponentTeam.find(entry => entry.id === active.teamID);
-		const move = Dex.moves.get(event.args[1]);
+		const move = this.dex.moves.get(event.args[1]);
 		if (pokemon && move.exists && !pokemon.moves.some(known => known.id === move.id)) {
 			pokemon.moves.push({ id: move.id, name: move.name });
 		}
@@ -367,7 +388,21 @@ export class StateTracker {
 	}
 
 	private findOpponent(species: string, name: string) {
-		return this.opponentTeam.find(pokemon => pokemon.species === species || pokemon.name === name) || null;
+		const baseSpecies = this.dex.species.get(species).baseSpecies;
+		return this.opponentTeam.find(pokemon =>
+			this.dex.species.get(pokemon.species).baseSpecies === baseSpecies || pokemon.name === name
+		) || null;
+	}
+
+	private applyPublicForm(active: ObservedActivePokemon) {
+		const species = this.dex.species.get(active.apparentSpecies);
+		if (!species.exists) return;
+		active.types = [...species.types];
+		const transformation = transformationForSpecies(species);
+		if (transformation) active.transformation = transformation;
+		// A revealed battle-only form's primary ability is static public Dex data. If Illusion
+		// still obscures that form, apparentSpecies will not resolve to it and no ability leaks.
+		if (species.battleOnly && species.abilities[0]) active.ability = this.dex.toID(species.abilities[0]);
 	}
 
 	private currentOpponentItem(pokemon: ObservedTeamPokemon) {
@@ -402,4 +437,10 @@ function ownPokemonID(index: number): OwnPokemonID {
 
 function opponentPokemonID(index: number): OpponentPokemonID {
 	return `opponent_${index}`;
+}
+
+function transformationForSpecies(species: ReturnType<ModdedDex['species']['get']>) {
+	if (species.isMega) return { kind: 'mega' as const };
+	if (species.forme === 'Ultra') return { kind: 'ultra' as const };
+	return null;
 }

@@ -6,12 +6,13 @@ const assert = require('../assert');
 const { MatchRunner, DEFAULT_FORMAT } = require('../../dist/tournament/match/match-runner');
 
 const root = path.resolve(__dirname, '../..');
-const team = fs.readFileSync(path.join(root, 'tournament/fixtures/teams/vgc-reg-i.txt'), 'utf8');
+const team = fs.readFileSync(path.join(root, 'tournament/fixtures/teams/champions-snow.txt'), 'utf8');
+const legacyTeam = fs.readFileSync(path.join(root, 'tournament/fixtures/teams/vgc-reg-i.txt'), 'utf8');
 const randomBot = path.join(root, 'tournament/reference-bots/random/main.py');
 const greedyBot = path.join(root, 'tournament/reference-bots/greedy-damage/main.py');
 const invalidBot = path.join(__dirname, 'fixtures/invalid.py');
 const validBot = path.join(__dirname, 'fixtures/valid.py');
-const shadowTagTeam = team.replace(/^Incineroar[\s\S]*?(?=\nRillaboom)/, `Gothitelle @ Sitrus Berry
+const shadowTagTeam = legacyTeam.replace(/^Incineroar[\s\S]*?(?=\nRillaboom)/, `Gothitelle @ Sitrus Berry
 Ability: Shadow Tag
 Level: 50
 EVs: 252 HP / 4 Def / 252 SpD
@@ -22,9 +23,11 @@ Tera Type: Dark
 - Protect
 `);
 
-function runMatch(p1Bot = randomBot, p2Bot = randomBot, seed = '1,2,3,4', p1Team = team, p2Team = team) {
+function runMatch(
+	p1Bot = randomBot, p2Bot = randomBot, seed = '1,2,3,4', p1Team = team, p2Team = team, format = DEFAULT_FORMAT
+) {
 	return new MatchRunner({
-		format: DEFAULT_FORMAT,
+		format,
 		seed,
 		decisionTimeoutMs: 1000,
 		matchTimeoutMs: 20_000,
@@ -45,9 +48,18 @@ describe('Tournament MatchRunner', function () {
 		assert.equal(result.players.p2.stats.fallbacks, 0);
 		for (const player of Object.values(result.players)) {
 			assert.equal(player.states[0].battle.phase, 'team_preview');
+			assert.equal(player.states[0].battle.mod, 'champions');
 			assert.equal(player.states[0].request.legal_actions.length, 360);
 			assert(player.states.some(state => state.battle.phase === 'turn'));
 			assert(player.states.some(state => state.opponent.team.length === 6));
+			const sheet = player.states.find(state => state.opponent.team.length === 6).opponent.team[0];
+			assert(sheet.species);
+			assert(sheet.item);
+			assert(sheet.ability);
+			assert.equal(sheet.moves.length, 4);
+			assert(sheet.nature);
+			assert(sheet.gender);
+			assert.equal(sheet.level, 50);
 		}
 		assert(Object.values(result.players).some(player =>
 			player.states.some(state => state.battle.phase === 'forced_switch')));
@@ -76,6 +88,7 @@ describe('Tournament MatchRunner', function () {
 					assert(!Object.hasOwn(pokemon, 'stats'));
 					assert(!Object.hasOwn(pokemon, 'evs'));
 					assert(!Object.hasOwn(pokemon, 'ivs'));
+					assert(!Object.hasOwn(pokemon, 'stat_points'));
 				}
 				for (const active of Object.values(state.opponent.active)) assert.equal(active.health.exact, false);
 			}
@@ -90,7 +103,8 @@ describe('Tournament MatchRunner', function () {
 	});
 
 	it('revises an unavailable hidden-information choice without charging an invalid attempt', async () => {
-		const result = await runMatch(validBot, validBot, '90,91,92,93', team, shadowTagTeam);
+		const legacyFormat = 'gen9vgc2025regi@@@!openteamsheets,forceopenteamsheets';
+		const result = await runMatch(validBot, validBot, '90,91,92,93', legacyTeam, shadowTagTeam, legacyFormat);
 		assert(result.players.p1.unavailable_choice_revisions > 0);
 		assert.equal(result.players.p1.stats.invalid_responses, 0);
 		assert(result.players.p1.states.some(state => state.runtime.revision > 0 && state.runtime.attempt === 1));

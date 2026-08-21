@@ -26,6 +26,7 @@ Reviewed harness baseline: `tournament-bot-v1` at `f474fa4622b419207f80c415c167e
 14. `part-14-of-16.md`
 15. `part-15-of-16.md`
 16. `part-16-of-16.md`
+17. `workstream-a-amendment.md` (authoritative Workstream A corrections discovered against the executable format)
 
 The document deliberately separates two Codex workstreams:
 

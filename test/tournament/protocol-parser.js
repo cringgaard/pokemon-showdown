@@ -57,7 +57,8 @@ describe('Tournament player-visible protocol tracking', () => {
 		assert.equal(tracker.opponentActive.right.health.percent, 73);
 		assert.equal(tracker.opponentActive.right.status, 'brn');
 		assert.equal(tracker.opponentActive.right.boosts.spa, 1);
-		assert.equal(tracker.opponentActive.right.terastallized, true);
+		assert.deepEqual(tracker.opponentActive.right.transformation, { kind: 'terastallize' });
+		assert.deepEqual(tracker.opponentActive.right.types, ['Grass']);
 		assert(tracker.opponentActive.right.volatiles.has('confusion'));
 		assert(!tracker.opponentActive.right.volatiles.has('protect'));
 		assert.equal(tracker.weather, 'raindance');

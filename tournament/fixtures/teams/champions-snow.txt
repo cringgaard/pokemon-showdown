@@ -1,0 +1,71 @@
+Glaceon @ Bright Powder
+Ability: Snow Cloak
+Level: 50
+Modest Nature
+EVs: 32 HP / 32 SpA / 2 Spe
+IVs: 31 HP / 31 Atk / 31 Def / 31 SpA / 31 SpD / 31 Spe
+Tera Type: Ice
+- Blizzard
+- Freeze-Dry
+- Calm Mind
+- Protect
+
+Ninetales-Alola @ Light Clay
+Ability: Snow Warning
+Level: 50
+Timid Nature
+EVs: 32 HP / 2 SpA / 32 Spe
+IVs: 31 HP / 31 Atk / 31 Def / 31 SpA / 31 SpD / 31 Spe
+Tera Type: Ice
+- Aurora Veil
+- Freeze-Dry
+- Icy Wind
+- Protect
+
+Maushold-Four @ Chople Berry
+Ability: Friend Guard
+Level: 50
+Jolly Nature
+EVs: 32 HP / 2 SpD / 32 Spe
+IVs: 31 HP / 31 Atk / 31 Def / 31 SpA / 31 SpD / 31 Spe
+Tera Type: Normal
+- Follow Me
+- Mud-Slap
+- Encore
+- Protect
+
+Aggron @ Aggronite
+Ability: Sturdy
+Level: 50
+Impish Nature
+EVs: 32 HP / 2 Atk / 32 Def
+IVs: 31 HP / 31 Atk / 31 Def / 31 SpA / 31 SpD / 31 Spe
+Tera Type: Steel
+- Body Press
+- Heavy Slam
+- Iron Defense
+- Protect
+
+Armarouge @ Colbur Berry
+Ability: Flash Fire
+Level: 50
+Modest Nature
+EVs: 32 HP / 32 SpA / 2 SpD
+IVs: 31 HP / 31 Atk / 31 Def / 31 SpA / 31 SpD / 31 Spe
+Tera Type: Fire
+- Armor Cannon
+- Psychic
+- Wide Guard
+- Ally Switch
+
+Heliolisk @ Focus Sash
+Ability: Dry Skin
+Level: 50
+Timid Nature
+EVs: 2 HP / 32 SpA / 32 Spe
+IVs: 31 HP / 31 Atk / 31 Def / 31 SpA / 31 SpD / 31 Spe
+Tera Type: Electric
+- Thunderbolt
+- Grass Knot
+- Hyper Voice
+- Protect

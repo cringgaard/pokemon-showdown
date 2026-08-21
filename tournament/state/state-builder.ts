@@ -1,4 +1,4 @@
-import { Dex } from '../../sim/dex';
+import { Dex, type ModdedDex } from '../../sim/dex';
 import type { ChoiceRequest } from '../../sim/side';
 import type {
 	BotState, Boosts, OpponentActiveState, OwnPokemonID, OwnPokemonState, Position, RuntimeInfo,
@@ -15,11 +15,12 @@ export interface StateBuildOptions {
 
 export function buildBotState(tracker: StateTracker, request: ChoiceRequest, options: StateBuildOptions): BotState {
 	const teamIDs = tracker.teamIDsForRequest(request);
-	const botRequest = generateLegalActions(request, { teamIDs });
+	const dex = Dex.forFormat(options.format);
+	const botRequest = generateLegalActions(request, { teamIDs, format: options.format });
 	if (!botRequest) throw new Error('Cannot build a decision state for a wait request');
 	const phase = botRequest.kind;
 	const ownTeam = request.side.pokemon.map((pokemon, index) => ownPokemonState(
-		pokemon, teamIDs[index] || `team_${index}`, tracker
+		pokemon, teamIDs[index] || `team_${index}`, tracker, dex
 	));
 	const active: Partial<Record<Position, OwnPokemonID>> = {};
 	const activePokemon = request.side.pokemon.filter(pokemon => pokemon.active);
@@ -28,7 +29,7 @@ export function buildBotState(tracker: StateTracker, request: ChoiceRequest, opt
 
 	return {
 		schema_version: 1,
-		battle: { format: options.format, turn: tracker.turn, phase },
+		battle: { format: options.format, mod: dex.currentMod, turn: tracker.turn, phase },
 		runtime: options.runtime,
 		self: {
 			name: request.side.name,
@@ -45,6 +46,9 @@ export function buildBotState(tracker: StateTracker, request: ChoiceRequest, opt
 				item: pokemon.item,
 				ability: pokemon.ability,
 				tera_type: pokemon.teraType,
+				nature: pokemon.nature,
+				gender: pokemon.gender,
+				level: pokemon.level,
 				moves: pokemon.moves.map(move => ({ ...move })),
 			})),
 			active: Object.fromEntries(Object.entries(tracker.opponentActive).map(([position, pokemon]) => [
@@ -63,9 +67,10 @@ export function buildBotState(tracker: StateTracker, request: ChoiceRequest, opt
 }
 
 function ownPokemonState(
-	pokemon: ChoiceRequest['side']['pokemon'][number], id: OwnPokemonID, tracker: StateTracker
+	pokemon: ChoiceRequest['side']['pokemon'][number], id: OwnPokemonID, tracker: StateTracker, dex: ModdedDex
 ): OwnPokemonState {
 	const species = speciesFromDetails(pokemon.details);
+	const speciesData = dex.species.get(species);
 	// Showdown clears boosts and volatiles on switch-out. Ignore any older observation for benched Pokemon.
 	const observed = pokemon.active ? tracker.ownObservationForIdent(pokemon.ident) : null;
 	return {
@@ -78,13 +83,13 @@ function ownPokemonState(
 		level: Number(/(?:^|, )L(\d+)/.exec(pokemon.details)?.[1] || 100),
 		item: pokemon.item || null,
 		ability: pokemon.ability || pokemon.baseAbility,
-		tera_type: pokemon.teraType || '',
-		terastallized: !!pokemon.terastallized,
+		types: pokemon.terastallized ? [pokemon.terastallized] : [...speciesData.types],
+		transformation: transformationForOwnPokemon(pokemon, speciesData),
 		stats: { ...pokemon.stats },
 		boosts: { ...(observed?.boosts || EMPTY_BOOSTS) } as Boosts,
 		moves: pokemon.moves.map(moveID => ({
-			id: Dex.moves.get(moveID).id,
-			name: Dex.moves.get(moveID).name,
+			id: dex.moves.get(moveID).id,
+			name: dex.moves.get(moveID).name,
 		})),
 		volatiles: observed ? [...observed.volatiles] : [],
 	};
@@ -100,10 +105,20 @@ function opponentActiveState(pokemon: NonNullable<StateTracker['opponentActive']
 		fainted: pokemon.fainted,
 		item: pokemon.item,
 		ability: pokemon.ability,
-		terastallized: pokemon.terastallized,
+		types: [...pokemon.types],
+		transformation: pokemon.transformation ? { ...pokemon.transformation } : null,
 		boosts: { ...pokemon.boosts },
 		volatiles: [...pokemon.volatiles],
 	};
+}
+
+function transformationForOwnPokemon(
+	pokemon: ChoiceRequest['side']['pokemon'][number], species: ReturnType<ModdedDex['species']['get']>
+) {
+	if (pokemon.terastallized) return { kind: 'terastallize' as const };
+	if (species.isMega) return { kind: 'mega' as const };
+	if (species.forme === 'Ultra') return { kind: 'ultra' as const };
+	return null;
 }
 
 function conditionStatus(condition: string) {
