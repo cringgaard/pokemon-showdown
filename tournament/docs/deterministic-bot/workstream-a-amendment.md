@@ -4,6 +4,8 @@ Status: authoritative amendment to the 16-part deterministic-bot design after te
 
 This amendment changes harness/mechanics assumptions only. It does not begin Workstream B or prescribe snow-team decisions.
 
+The final Champions-compatible participant contract is `BotState.schema_version: 2` because Workstream A intentionally replaced the original Tera-specific schema.
+
 ## Exact format boundary
 
 - Configured format ID: `gen9championsvgc2026regmb`.
@@ -38,11 +40,15 @@ The exact format uses consensual `Open Team Sheets`; a raw headless battle does 
 
 Champions OTS exposes species, item, ability, moves, nature, gender, level, and inert Tera type. It excludes calculated stats, Stat Points/EVs, and IVs. Immutable sheet values stay separate from observed current active form, types, ability, item, and transformation.
 
+The checked-in `champions-snow.txt` fixture is the exact six-set team specified in parts 1-2, including its natures, Stat Points, items, and moves. It is both the CLI Champions fixture and a validation regression.
+
 ## Public post-Mega state
 
 Own current state comes from the player's request. Opponent current state comes only from that player's protocol stream. Public `detailschange` and `-mega` events update apparent form, format-correct types, public fixed Mega ability, and transformation use while preserving stable OTS identity when already established.
 
-Illusion remains conservative: if public evidence does not resolve identity or form, `team_id` and hidden current ability stay unknown. A public Mega event may reveal that the side used Mega without authorizing hidden-form inference.
+Returning publicly identified Mega forms are normalized through the format Dex on every switch-in, so immutable OTS base abilities never overwrite their current Mega abilities.
+
+Illusion remains conservative: `apparent_species` preserves the visible appearance, while opponent `types` is `null` if actual identity/type is unresolved. Transformation is not inferred solely from an unresolved apparent form. A direct public Mega event may reveal that the active PokÃ©mon transformed without authorizing hidden type or ability inference.
 
 ## Corrected mechanics assumptions
 

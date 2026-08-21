@@ -171,7 +171,7 @@ export class StateTracker {
 		const apparentSpecies = speciesFromDetails(event.args[1] || ident.name);
 		const species = this.dex.species.get(apparentSpecies);
 		const matched = this.opponentHasIllusion ? null : this.findOpponent(apparentSpecies, ident.name);
-		this.opponentActive[position] = {
+		const active: ObservedActivePokemon = {
 			position,
 			ident: event.args[0],
 			name: ident.name,
@@ -182,11 +182,13 @@ export class StateTracker {
 			fainted: (event.args[2] || '').endsWith(' fnt'),
 			item: matched ? this.currentOpponentItem(matched) : null,
 			ability: matched?.ability || null,
-			types: [...species.types],
-			transformation: transformationForSpecies(species),
+			types: matched ? [...species.types] : null,
+			transformation: matched ? transformationForSpecies(species) : null,
 			boosts: { ...EMPTY_BOOSTS },
 			volatiles: new Set(),
 		};
+		this.opponentActive[position] = active;
+		if (matched) this.applyPublicForm(active);
 	}
 
 	private applyReplace(event: ProtocolEvent) {
@@ -218,7 +220,8 @@ export class StateTracker {
 		const active = this.activeFor(event.args[0]);
 		if (!active) return;
 		active.apparentSpecies = speciesFromDetails(event.args[1] || active.apparentSpecies);
-		this.applyPublicForm(active);
+		if (active.teamID) this.applyPublicForm(active);
+		else active.types = null;
 		if (event.type === '-formechange' && effectID(event.args[1]) === 'terastallized') {
 			active.transformation = { kind: 'terastallize' };
 		}
@@ -228,14 +231,14 @@ export class StateTracker {
 		const active = this.activeFor(event.args[0]);
 		if (!active) return;
 		active.transformation = { kind: 'terastallize' };
-		if (event.args[1]) active.types = [event.args[1]];
+		if (event.args[1] && active.teamID) active.types = [event.args[1]];
 	}
 
 	private applyTransformation(event: ProtocolEvent, kind: 'mega') {
 		const active = this.activeFor(event.args[0]);
 		if (!active) return;
 		active.transformation = { kind };
-		this.applyPublicForm(active);
+		if (active.teamID) this.applyPublicForm(active);
 	}
 
 	private applyMove(event: ProtocolEvent) {
@@ -395,6 +398,10 @@ export class StateTracker {
 	}
 
 	private applyPublicForm(active: ObservedActivePokemon) {
+		if (!active.teamID) {
+			active.types = null;
+			return;
+		}
 		const species = this.dex.species.get(active.apparentSpecies);
 		if (!species.exists) return;
 		active.types = [...species.types];

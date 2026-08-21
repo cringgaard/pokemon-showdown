@@ -47,6 +47,7 @@ describe('Tournament MatchRunner', function () {
 		assert.equal(result.players.p1.stats.fallbacks, 0);
 		assert.equal(result.players.p2.stats.fallbacks, 0);
 		for (const player of Object.values(result.players)) {
+			assert.equal(player.states[0].schema_version, 2);
 			assert.equal(player.states[0].battle.phase, 'team_preview');
 			assert.equal(player.states[0].battle.mod, 'champions');
 			assert.equal(player.states[0].request.legal_actions.length, 360);

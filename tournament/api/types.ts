@@ -15,7 +15,7 @@ export interface TransformationState {
 }
 
 export interface BotState {
-	schema_version: 1;
+	schema_version: 2;
 	battle: BattleInfo;
 	runtime: RuntimeInfo;
 	self: OwnSideState;
@@ -105,7 +105,7 @@ export interface OpponentActiveState {
 	fainted: boolean;
 	item: string | null;
 	ability: string | null;
-	types: string[];
+	types: string[] | null;
 	transformation: TransformationState | null;
 	boosts: Boosts;
 	volatiles: string[];

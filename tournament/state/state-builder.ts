@@ -28,7 +28,7 @@ export function buildBotState(tracker: StateTracker, request: ChoiceRequest, opt
 	if (activePokemon[1]) active.right = tracker.ownIDForIdent(activePokemon[1].ident) || teamIDs[1];
 
 	return {
-		schema_version: 1,
+		schema_version: 2,
 		battle: { format: options.format, mod: dex.currentMod, turn: tracker.turn, phase },
 		runtime: options.runtime,
 		self: {
@@ -105,7 +105,7 @@ function opponentActiveState(pokemon: NonNullable<StateTracker['opponentActive']
 		fainted: pokemon.fainted,
 		item: pokemon.item,
 		ability: pokemon.ability,
-		types: [...pokemon.types],
+		types: pokemon.types ? [...pokemon.types] : null,
 		transformation: pokemon.transformation ? { ...pokemon.transformation } : null,
 		boosts: { ...pokemon.boosts },
 		volatiles: [...pokemon.volatiles],

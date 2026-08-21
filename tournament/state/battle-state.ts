@@ -17,7 +17,7 @@ export interface ObservedActivePokemon {
 	fainted: boolean;
 	item: string | null;
 	ability: string | null;
-	types: string[];
+	types: string[] | null;
 	transformation: TransformationState | null;
 	boosts: Boosts;
 	volatiles: Set<string>;
