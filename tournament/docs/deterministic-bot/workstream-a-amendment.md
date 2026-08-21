@@ -48,7 +48,7 @@ Own current state comes from the player's request. Opponent current state comes 
 
 Returning publicly identified Mega forms are normalized through the format Dex on every switch-in, so immutable OTS base abilities never overwrite their current Mega abilities.
 
-Illusion remains conservative: `apparent_species` preserves the visible appearance, while opponent `types` is `null` if actual identity/type is unresolved. Transformation is not inferred solely from an unresolved apparent form. A direct public Mega event may reveal that the active PokÃ©mon transformed without authorizing hidden type or ability inference.
+Illusion remains conservative: `apparent_species` preserves the visible appearance, while opponent `types` is `null` if actual identity/type is unresolved. Transformation is not inferred solely from an unresolved apparent form. A direct public Mega event may reveal that the active Pokémon transformed without authorizing hidden type or ability inference.
 
 ## Corrected mechanics assumptions
 

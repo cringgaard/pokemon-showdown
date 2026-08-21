@@ -80,6 +80,53 @@ describe('Tournament player-visible protocol tracking', () => {
 		assert.equal(tracker.opponentActive.right.teamID, 'opponent_0');
 	});
 
+	it('tracks explicit public type changes and additions until they end or switch', () => {
+		const tracker = new StateTracker('p1');
+		const opponentTeam = Teams.pack([
+			{ name: 'Moth', species: 'Volcarona', item: 'leftovers', ability: 'flamebody', moves: ['heatwave'] },
+		]);
+		tracker.consume([
+			`|showteam|p2|${opponentTeam}`,
+			'|switch|p2a: Moth|Volcarona, L50|100/100',
+			'|-start|p2a: Moth|typechange|Water|[from] move: Soak',
+		].join('\n'));
+		assert.deepEqual(tracker.opponentActive.right.types, ['Water']);
+
+		tracker.consume("|-start|p2a: Moth|typeadd|Ghost|[from] move: Trick-or-Treat");
+		assert.deepEqual(tracker.opponentActive.right.types, ['Water', 'Ghost']);
+		tracker.consume('|-end|p2a: Moth|typeadd|Ghost');
+		assert.deepEqual(tracker.opponentActive.right.types, ['Water']);
+		tracker.consume('|-end|p2a: Moth|typechange|[silent]');
+		assert.deepEqual(tracker.opponentActive.right.types, ['Bug', 'Fire']);
+
+		tracker.consume('|switch|p2a: Moth|Volcarona, L50|100/100');
+		assert.deepEqual(tracker.opponentActive.right.types, ['Bug', 'Fire']);
+	});
+
+	it('tracks type protocol conservatively while Illusion leaves identity unresolved', () => {
+		const tracker = new StateTracker('p1');
+		const opponentTeam = Teams.pack([
+			{ name: 'Mask', species: 'Zoroark', item: 'focussash', ability: 'illusion', moves: ['nightdaze'] },
+			{ name: 'Dragon', species: 'Dragonite', item: 'lumberry', ability: 'multiscale', moves: ['extremespeed'] },
+		]);
+		tracker.consume([
+			`|showteam|p2|${opponentTeam}`,
+			'|switch|p2a: Dragon|Dragonite, L50|100/100',
+			"|-start|p2a: Dragon|typeadd|Ghost|[from] move: Trick-or-Treat",
+		].join('\n'));
+		assert.equal(tracker.opponentActive.right.teamID, null);
+		assert.equal(tracker.opponentActive.right.types, null);
+
+		tracker.consume('|-start|p2a: Dragon|typechange|[from] move: Reflect Type|[of] p1a: Hidden');
+		assert.equal(tracker.opponentActive.right.types, null);
+		tracker.consume('|-start|p2a: Dragon|typechange|Water|[from] move: Soak');
+		assert.deepEqual(tracker.opponentActive.right.types, ['Water', 'Ghost']);
+
+		tracker.consume('|replace|p2a: Mask|Zoroark, L50|100/100');
+		assert.equal(tracker.opponentActive.right.teamID, 'opponent_0');
+		assert.deepEqual(tracker.opponentActive.right.types, ['Water', 'Ghost']);
+	});
+
 	it('tracks own boosts and volatiles solely from the player stream', () => {
 		const tracker = new StateTracker('p1');
 		tracker.consume('|switch|p1a: Hero|Arcanine, L50|200/200\n|-boost|p1a: Hero|atk|1\n|-start|p1a: Hero|substitute');
