@@ -13,7 +13,7 @@ def _move_score(state, position, action):
     score = move["base_power"] * attacking_stat
     if action.get("target", "").startswith("opponent_"):
         score *= 1.05
-    if action.get("terastallize"):
+    if action.get("transformation"):
         score *= 1.02
     return score
 

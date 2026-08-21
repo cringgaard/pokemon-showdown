@@ -6,6 +6,7 @@ const { adaptAction } = require('../../dist/tournament/actions/action-adapter');
 const { validateResponse } = require('../../dist/tournament/actions/action-validator');
 
 const teamIDs = ['team_0', 'team_1', 'team_2', 'team_3', 'team_4', 'team_5'];
+const FORMAT = 'gen9championsvgc2026regmb';
 
 function sidePokemon() {
 	return teamIDs.map((id, index) => ({
@@ -49,26 +50,68 @@ describe('Tournament action generator', () => {
 			maxChosenTeamSize: 4,
 			side: { name: 'Bot', id: 'p1', pokemon: sidePokemon() },
 		};
-		const generated = generateLegalActions(request, { teamIDs });
+		const generated = generateLegalActions(request, { teamIDs, format: FORMAT });
 		assert.equal(generated.kind, 'team_preview');
 		assert.equal(generated.legal_actions.length, 360);
 		assert.equal(adaptAction(generated.legal_actions[0], request, teamIDs), 'team 1234');
 	});
 
-	it('expands targets and Tera while filtering double Tera and duplicate switches', () => {
+	it('expands transformations while filtering double use and duplicate switches', () => {
 		const request = moveRequest();
-		const generated = generateLegalActions(request, { teamIDs });
+		const generated = generateLegalActions(request, { teamIDs, format: FORMAT });
 		assert.equal(generated.kind, 'turn');
 		assert.deepEqual(generated.slots.left.moves[0].legal_targets, ['ally', 'opponent_left', 'opponent_right']);
 		assert.deepEqual(generated.slots.left.moves[1].legal_targets, []);
 		assert.deepEqual(generated.slots.right.moves[0].legal_targets, []);
 		assert(!generated.legal_actions.some(action => (
-			action.actions.left?.terastallize && action.actions.right?.terastallize
+			action.actions.left?.transformation && action.actions.right?.transformation
 		)));
 		assert(!generated.legal_actions.some(action => (
 			action.actions.left?.type === 'switch' && action.actions.right?.type === 'switch' &&
 			action.actions.left.pokemon === action.actions.right.pokemon
 		)));
+	});
+
+	it('exposes real Mega requests semantically and adapts only at the Showdown boundary', () => {
+		const pokemon = sidePokemon();
+		pokemon[0] = { ...pokemon[0], details: 'Aggron, L50', item: 'aggronite', ability: 'sturdy', baseAbility: 'sturdy' };
+		pokemon[1] = { ...pokemon[1], details: 'Raichu, L50', item: 'raichunitex', ability: 'static', baseAbility: 'static' };
+		const request = moveRequest({
+			active: [
+				{ moves: [{ move: 'Protect', id: 'protect', pp: 5, maxpp: 5, target: 'self' }], canMegaEvo: true },
+				{ moves: [{ move: 'Protect', id: 'protect', pp: 5, maxpp: 5, target: 'self' }], canMegaEvo: true },
+			],
+			side: { name: 'Bot', id: 'p1', pokemon },
+		});
+		const generated = generateLegalActions(request, { teamIDs, format: FORMAT });
+		assert.deepEqual(generated.slots.left.available_transformations, [
+			{ kind: 'mega', result_species: 'Aggron-Mega' },
+		]);
+		assert.deepEqual(generated.slots.right.available_transformations, [
+			{ kind: 'mega', result_species: 'Raichu-Mega-X' },
+		]);
+		const mega = generated.legal_actions.find(action =>
+			action.actions.left?.transformation === 'mega' && action.actions.right?.type === 'move' &&
+			!action.actions.right.transformation
+		);
+		assert(mega);
+		assert.equal(adaptAction(mega, request, teamIDs), 'move 1 mega, move 1');
+		assert(!generated.legal_actions.some(action =>
+			action.actions.left?.transformation === 'mega' && action.actions.right?.transformation === 'mega'
+		));
+	});
+
+	it('uses format-aware public move metadata', () => {
+		const request = moveRequest({
+			active: [
+				{ moves: [{ move: 'Growth', id: 'growth', pp: 20, maxpp: 20, target: 'self' }] },
+				{ moves: [{ move: 'Protect', id: 'protect', pp: 5, maxpp: 5, target: 'self' }] },
+			],
+		});
+		const champions = generateLegalActions(request, { teamIDs, format: FORMAT });
+		const standard = generateLegalActions(request, { teamIDs, format: 'gen9doublescustomgame' });
+		assert.equal(champions.slots.left.moves[0].type, 'Grass');
+		assert.equal(standard.slots.left.moves[0].type, 'Normal');
 	});
 
 	it('handles trapped slots, non-required fainted slots, and semantic translation', () => {
@@ -81,7 +124,7 @@ describe('Tournament action generator', () => {
 			],
 			side: { name: 'Bot', id: 'p1', pokemon },
 		});
-		const generated = generateLegalActions(request, { teamIDs });
+		const generated = generateLegalActions(request, { teamIDs, format: FORMAT });
 		assert.equal(generated.slots.left.switches.length, 0);
 		assert.equal(generated.slots.right.required, false);
 		const action = generated.legal_actions.find(candidate => candidate.actions.left?.target === 'opponent_right');
@@ -96,14 +139,14 @@ describe('Tournament action generator', () => {
 		const one = generateLegalActions({
 			forceSwitch: [true, false],
 			side: { name: 'Bot', id: 'p1', pokemon: sidePokemon() },
-		}, { teamIDs });
+		}, { teamIDs, format: FORMAT });
 		assert.equal(one.kind, 'forced_switch');
 		assert(one.legal_actions.every(action => action.actions.left && !action.actions.right));
 
 		const two = generateLegalActions({
 			forceSwitch: [true, true],
 			side: { name: 'Bot', id: 'p1', pokemon: sidePokemon() },
-		}, { teamIDs });
+		}, { teamIDs, format: FORMAT });
 		assert(two.legal_actions.every(action => action.actions.left.pokemon !== action.actions.right.pokemon));
 	});
 
@@ -116,7 +159,7 @@ describe('Tournament action generator', () => {
 			forceSwitch: [true, true],
 			side: { name: 'Bot', id: 'p1', pokemon },
 		};
-		const generated = generateLegalActions(request, { teamIDs });
+		const generated = generateLegalActions(request, { teamIDs, format: FORMAT });
 		assert.deepEqual(generated.legal_actions, [
 			{ actions: { left: { type: 'switch', pokemon: 'team_2' } } },
 			{ actions: { right: { type: 'switch', pokemon: 'team_2' } } },
@@ -135,7 +178,7 @@ describe('Tournament action generator', () => {
 			forceSwitch: [true, false],
 			side: { name: 'Bot', id: 'p1', pokemon },
 		};
-		const generated = generateLegalActions(request, { teamIDs });
+		const generated = generateLegalActions(request, { teamIDs, format: FORMAT });
 		assert.deepEqual(generated.slots.left.switches, []);
 		assert.deepEqual(generated.slots.left.revives, ['team_2']);
 		assert.deepEqual(generated.legal_actions, [
@@ -149,7 +192,7 @@ describe('Tournament action generator', () => {
 		request.active[0].moves.push({
 			move: 'Fake Out', id: 'fakeout', pp: 10, maxpp: 10, target: 'adjacentFoe',
 		});
-		const generated = generateLegalActions(request, { teamIDs });
+		const generated = generateLegalActions(request, { teamIDs, format: FORMAT });
 		assert(generated.slots.left.moves.find(move => move.id === 'thunderbolt').legal_targets.includes('ally'));
 		assert(!generated.slots.left.moves.find(move => move.id === 'fakeout').legal_targets.includes('ally'));
 	});
@@ -157,14 +200,14 @@ describe('Tournament action generator', () => {
 	it('keeps maybeTrapped switches provisionally legal', () => {
 		const request = moveRequest();
 		request.active[0].maybeTrapped = true;
-		const generated = generateLegalActions(request, { teamIDs });
+		const generated = generateLegalActions(request, { teamIDs, format: FORMAT });
 		assert(generated.slots.left.switches.length > 0);
 	});
 
 	it('keeps disabled moves in slot metadata but excludes them from legal actions', () => {
 		const request = moveRequest();
 		request.active[0].moves[0].disabled = true;
-		const generated = generateLegalActions(request, { teamIDs });
+		const generated = generateLegalActions(request, { teamIDs, format: FORMAT });
 		const disabled = generated.slots.left.moves.find(move => move.id === 'thunderbolt');
 		assert(disabled);
 		assert.equal(disabled.disabled, true);

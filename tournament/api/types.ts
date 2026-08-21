@@ -3,6 +3,16 @@ export type Position = 'left' | 'right';
 export type Target = 'self' | 'ally' | 'opponent_left' | 'opponent_right';
 export type OwnPokemonID = `team_${number}`;
 export type OpponentPokemonID = `opponent_${number}`;
+export type TransformationKind = 'mega' | 'mega_x' | 'mega_y' | 'ultra' | 'dynamax' | 'terastallize';
+
+export interface TransformationOption {
+	kind: TransformationKind;
+	result_species?: string;
+}
+
+export interface TransformationState {
+	kind: TransformationKind;
+}
 
 export interface BotState {
 	schema_version: 1;
@@ -17,6 +27,7 @@ export interface BotState {
 
 export interface BattleInfo {
 	format: string;
+	mod: string;
 	turn: number;
 	phase: BattlePhase;
 }
@@ -64,8 +75,8 @@ export interface OwnPokemonState {
 	level: number;
 	item: string | null;
 	ability: string;
-	tera_type: string;
-	terastallized: boolean;
+	types: string[];
+	transformation: TransformationState | null;
 	stats: Stats;
 	boosts: Boosts;
 	moves: KnownMove[];
@@ -79,6 +90,9 @@ export interface OpponentPokemonState {
 	item: string | null;
 	ability: string | null;
 	tera_type: string | null;
+	nature: string | null;
+	gender: string | null;
+	level: number | null;
 	moves: KnownMove[];
 }
 
@@ -91,7 +105,8 @@ export interface OpponentActiveState {
 	fainted: boolean;
 	item: string | null;
 	ability: string | null;
-	terastallized: boolean;
+	types: string[];
+	transformation: TransformationState | null;
 	boosts: Boosts;
 	volatiles: string[];
 }
@@ -138,7 +153,7 @@ export interface MoveAction {
 	type: 'move';
 	move: string;
 	target?: Target;
-	terastallize?: boolean;
+	transformation?: TransformationKind;
 }
 
 export interface SwitchAction {
@@ -168,7 +183,7 @@ export interface SlotRequest {
 	moves: MoveOption[];
 	switches: OwnPokemonID[];
 	revives: OwnPokemonID[];
-	can_terastallize: boolean;
+	available_transformations: TransformationOption[];
 }
 
 export interface TeamPreviewBotRequest {

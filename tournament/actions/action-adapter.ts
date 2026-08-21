@@ -30,8 +30,19 @@ function adaptPokemonAction(
 	if (!slot) throw new Error(`Unknown move ${action.move}`);
 	let choice = `move ${slot}`;
 	if (action.target) choice += ` ${targetLocation(action.target, activeIndex)}`;
-	if (action.terastallize) choice += ' terastallize';
+	if (action.transformation) choice += ` ${transformationSuffix(action.transformation)}`;
 	return choice;
+}
+
+function transformationSuffix(kind: NonNullable<Extract<PokemonAction, { type: 'move' }>['transformation']>) {
+	switch (kind) {
+	case 'mega': return 'mega';
+	case 'mega_x': return 'megax';
+	case 'mega_y': return 'megay';
+	case 'ultra': return 'ultra';
+	case 'dynamax': return 'dynamax';
+	case 'terastallize': return 'terastallize';
+	}
 }
 
 function targetLocation(target: Target, activeIndex: number) {
