@@ -15,6 +15,7 @@ import {
 import type { TournamentPacingController } from './pacing';
 import type { TournamentPlaybackController } from './playback';
 import { TournamentStateStore } from './state-store';
+import { publicTeamSheets, type PublicTeamSheet } from '../spectator/public-team-sheet';
 
 export interface PreparedTournamentParticipant {
 	submission: LoadedSubmission;
@@ -28,6 +29,7 @@ export interface TournamentOrchestratorOptions {
 	eventStore: TournamentEventStore;
 	pacing: TournamentPacingController;
 	playback: TournamentPlaybackController;
+	publicTeams?: Map<string, PublicTeamSheet>;
 	matchExecutor?: (options: MatchOptions) => Promise<MatchResult>;
 }
 
@@ -38,6 +40,7 @@ export class TournamentOrchestrator {
 	readonly eventStore: TournamentEventStore;
 	readonly pacing: TournamentPacingController;
 	readonly playback: TournamentPlaybackController;
+	readonly publicTeams: Map<string, PublicTeamSheet>;
 	private readonly executeMatch: (options: MatchOptions) => Promise<MatchResult>;
 
 	constructor(options: TournamentOrchestratorOptions) {
@@ -47,6 +50,7 @@ export class TournamentOrchestrator {
 		this.eventStore = options.eventStore;
 		this.pacing = options.pacing;
 		this.playback = options.playback;
+		this.publicTeams = options.publicTeams || publicTeamSheets(options.participants);
 		this.executeMatch = options.matchExecutor || (matchOptions => new MatchRunner(matchOptions).run());
 		for (const participant of this.config.config.participants) {
 			if (!this.participants.has(participant.id)) throw new Error(`Participant ${participant.id} was not prepared.`);
@@ -125,7 +129,23 @@ export class TournamentOrchestrator {
 		const intro = this.matchState('intro', game, gameNumber, score);
 		this.eventStore.publishPresentation(intro, true);
 		await this.pacing.wait(intro, this.standingsState(game));
+		if (!this.pairingAlreadyPresented(game)) {
+			for (const side of ['p1', 'p2'] as const) {
+				const teamSheet = { ...this.matchState('team_sheet', game, gameNumber, score), team_sheet_side: side };
+				this.eventStore.publishPresentation(teamSheet);
+				await this.pacing.wait(teamSheet, this.standingsState(game));
+			}
+		}
+		const preview = this.matchState('team_preview', game, gameNumber, score);
+		this.eventStore.publishPresentation(preview);
+		this.pacing.setPrimary(preview, this.standingsState(game));
 		const { completed, protocolGeneration } = await this.runGame(game, gameNumber, score);
+		const locked = this.matchState('selection_locked', game, gameNumber, score);
+		this.eventStore.publishPresentation(locked);
+		await this.pacing.wait(locked, this.standingsState(game));
+		const live = this.matchState('live', game, gameNumber, score);
+		this.eventStore.publishPresentation(live);
+		this.pacing.setPrimary(live, this.standingsState(game));
 		await this.playback.waitForCompletion(protocolGeneration);
 		const result = this.resultState(completed, gameNumber, score);
 		this.eventStore.publishPresentation(result);
@@ -138,8 +158,6 @@ export class TournamentOrchestrator {
 		const artifactDirectory = this.stateStore.matchAttemptDirectory(game, attempt);
 		this.stateStore.state.in_progress = { game, attempt, artifact_directory: artifactDirectory };
 		this.stateStore.save();
-		const live = this.matchState('live', game, gameNumber, score);
-		this.eventStore.publishPresentation(live);
 		const protocolGeneration = this.eventStore.presentation.protocol_generation;
 		if (!Number.isSafeInteger(protocolGeneration)) {
 			throw new Error(`Match ${game.id} has no spectator protocol generation.`);
@@ -171,6 +189,12 @@ export class TournamentOrchestrator {
 		this.stateStore.state.in_progress = null;
 		this.stateStore.save();
 		return { completed, protocolGeneration: protocolGeneration! };
+	}
+
+	private pairingAlreadyPresented(game: ScheduledGame) {
+		return this.stateStore.state.completed_games.some(completed => (
+			completed.stage === game.stage && completed.pairing_id === game.pairing_id
+		));
 	}
 
 	private recoverCompletedAttempt(): CompletedTournamentGame | null {
@@ -236,7 +260,8 @@ export class TournamentOrchestrator {
 	}
 
 	private matchState(
-		kind: 'intro' | 'live', game: ScheduledGame, gameNumber: number, score: Record<string, number> | null
+		kind: 'intro' | 'team_sheet' | 'team_preview' | 'selection_locked' | 'live',
+		game: ScheduledGame, gameNumber: number, score: Record<string, number> | null
 	): TournamentPresentationState {
 		return {
 			...this.common(kind),
@@ -246,8 +271,16 @@ export class TournamentOrchestrator {
 			game_number: gameNumber,
 			p1: this.displayParticipant(game.p1),
 			p2: this.displayParticipant(game.p2),
+			teams: this.displayTeams(game),
 			series_score: score || undefined,
 		};
+	}
+
+	private displayTeams(game: ScheduledGame) {
+		const p1 = this.publicTeams.get(game.p1);
+		const p2 = this.publicTeams.get(game.p2);
+		if (!p1 || !p2) throw new Error(`Public team sheets are unavailable for ${game.id}.`);
+		return { p1, p2 };
 	}
 
 	private resultState(

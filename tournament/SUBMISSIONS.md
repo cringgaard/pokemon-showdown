@@ -50,6 +50,41 @@ own-team IDs are `team_0` through `team_5`; Open Team Sheet opponent IDs are `op
 The same `choose_action` function handles Team Preview, ordinary turns, and forced switches. The runtime retries
 invalid responses, enforces the shared decision deadline, and uses a deterministic legal fallback after failures.
 
+## Bring 6 / Pick 4 Team Preview
+
+Every game starts with Team Preview, including every game in a multi-game final. Your registered six-Pokemon team
+stays fixed for the event, but your bot chooses and orders four Pokemon independently for each game. The first two
+entries are the leads and the final two are reserves:
+
+```python
+def choose_action(state):
+    if state["battle"]["phase"] == "team_preview":
+        # self.team contains your six Pokemon. opponent.team contains only
+        # the opponent's public Open Team Sheet information.
+        preferred = {
+            "team": [
+                "team_4",  # lead 1
+                "team_1",  # lead 2
+                "team_0",  # reserve
+                "team_5",  # reserve
+            ]
+        }
+        # legal_actions is authoritative for complete legal responses.
+        return preferred if preferred in state["request"]["legal_actions"] else state["request"]["legal_actions"][0]
+
+    return state["request"]["legal_actions"][0]
+```
+
+Select exactly four distinct Pokemon. Ordering matters. Participant code returns semantic IDs and never needs to
+generate Showdown's `team 1234` protocol syntax. Open Team Sheet information about the opponent may be used for the
+decision, but no selected-four, lead, spectator, standings, or operator metadata is provided to bots.
+
+Team Preview currently uses the same `decision_timeout_ms` as turn and forced-switch decisions. A separate timeout
+was investigated for the presentation enhancement but was not added: enforcing it correctly would require a
+phase-aware worker deadline in addition to config and runtime plumbing. The shared deadline keeps existing timeout
+and deterministic-fallback guarantees unchanged; events that need more thinking time can raise the documented
+general decision timeout.
+
 The tournament generates all build definitions. Participant Dockerfiles and symlinks are rejected. Each non-comment
 `requirements.txt` line must be an exact `name[extras]==version` registry pin. Installation runs non-root from a
 trusted directory with isolated Python, `--only-binary=:all:`, and `--no-deps`; URLs, paths, editable/VCS/source

@@ -3,6 +3,7 @@ import * as http from 'http';
 import * as path from 'path';
 import { ProtocolStore, type StoredProtocolChunk } from './protocol-store';
 import { loadReplayArtifacts } from './replay-loader';
+import type { PublicTeamSheet } from './public-team-sheet';
 
 export const OFFICIAL_REPLAY_EMBED_URL = 'https://play.pokemonshowdown.com/js/replay-embed.js';
 
@@ -158,6 +159,7 @@ export interface ViewerInitialState {
 	complete: boolean;
 	sequence: number;
 	event_mode: boolean;
+	playback?: Record<string, unknown>;
 }
 
 export function renderViewerHTML(state: ViewerInitialState, protocol: string) {
@@ -180,6 +182,8 @@ export function renderViewerHTML(state: ViewerInitialState, protocol: string) {
 <main class="event-main">
 <section id="idle-screen" class="presentation-screen title-screen"><div class="kicker">Welcome to</div><h1 id="idle-title"></h1><p id="idle-subtitle"></p><div id="idle-next" class="next-card"></div></section>
 <section id="intro-screen" class="presentation-screen versus-screen"><div class="stage-copy" id="intro-stage"></div><div class="versus-grid"><div id="intro-p1" class="competitor"></div><div class="versus-mark">VS</div><div id="intro-p2" class="competitor"></div></div><div id="intro-score" class="series-score"></div></section>
+<section id="team-sheet-screen" class="presentation-screen team-sheet-screen"><div class="team-sheet-heading"><div class="kicker">Open Team Sheet</div><h1 id="team-sheet-name"></h1></div><div id="team-sheet-grid" class="team-card-grid"></div></section>
+<section id="team-preview-screen" class="presentation-screen team-preview-screen"><div class="preview-rosters"><div><h2 id="preview-p1-name"></h2><div id="preview-p1-roster" class="preview-roster"></div></div><div class="preview-vs">VS</div><div><h2 id="preview-p2-name"></h2><div id="preview-p2-roster" class="preview-roster"></div></div></div><div class="preview-status"><strong id="preview-status-title">Selecting teams...</strong><span>Bring 6 · Pick 4 · Lead 2</span></div></section>
 <section id="live-screen" class="presentation-screen battle-screen"><div class="battle-frame"><div class="wrapper replay-wrapper"><div class="battle"></div><div class="battle-log"></div><div class="replay-controls"></div><div class="replay-controls-2"></div></div></div><div id="live-score" class="series-score live-score"></div></section>
 <section id="result-screen" class="presentation-screen result-screen"><div class="kicker" id="result-stage"></div><h1 id="result-copy"></h1><div id="result-score" class="series-score"></div></section>
 <section id="standings-screen" class="presentation-screen standings-screen"><div class="standings-layout"><div><div class="kicker" id="standings-stage">Standings</div><h1>Leaderboard</h1><table><thead><tr><th>#</th><th>Participant</th><th>W</th><th>L</th><th>T</th><th>Pts</th></tr></thead><tbody id="standings-body"></tbody></table></div><aside><div class="kicker">Next up</div><div id="next-match" class="next-card"></div><div id="between-score" class="series-score"></div></aside></div></section>
@@ -194,6 +198,20 @@ export function renderViewerHTML(state: ViewerInitialState, protocol: string) {
 </body>
 </html>`;
 	/* eslint-enable @stylistic/max-len */
+}
+
+export function renderTeamSheetHTML(team: PublicTeamSheet, title = 'Open Team Sheet') {
+	const cards = team.pokemon.map(renderTeamCard).join('');
+	return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeHTML(team.participant.name)} · ${escapeHTML(title)}</title><link rel="stylesheet" href="/spectator.css"></head><body class="standalone-team-sheet"><main class="standalone-team-main"><div class="team-sheet-heading"><div class="kicker">${escapeHTML(title)}</div><h1>${escapeHTML(team.participant.name)}</h1></div><div class="team-card-grid">${cards}</div></main><script type="application/json" id="team-sheet-data">${escapeScriptText(JSON.stringify(team))}</script></body></html>`;
+}
+
+function renderTeamCard(pokemon: PublicTeamSheet['pokemon'][number]) {
+	const details = [
+		['Ability', pokemon.ability], ['Item', pokemon.item || 'No item'],
+	].map(([label, value]) => `<div><span>${label}</span><strong>${escapeHTML(value)}</strong></div>`).join('');
+	const moves = pokemon.moves.map(move => `<li>${escapeHTML(move)}</li>`).join('');
+	const label = pokemon.name === pokemon.species ? pokemon.species : `${pokemon.name} (${pokemon.species})`;
+	return `<article class="team-card"><div class="team-card-top"><img src="https://play.pokemonshowdown.com/sprites/gen5/${encodeURIComponent(pokemon.sprite)}.png" alt=""><h2>${escapeHTML(label)}</h2></div><div class="team-card-facts">${details}</div><ul>${moves}</ul></article>`;
 }
 
 export function webAsset(filename: string) {

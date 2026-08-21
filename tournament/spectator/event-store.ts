@@ -1,10 +1,13 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import type { SpectatorSink } from './spectator-publisher';
+import type { PublicTeamSheet } from './public-team-sheet';
 
 export const TOURNAMENT_EVENT_SCHEMA_VERSION = 1;
 
-export type PresentationKind = 'idle' | 'intro' | 'live' | 'result' | 'standings' | 'champion';
+export type PresentationKind =
+	'idle' | 'intro' | 'team_sheet' | 'team_preview' | 'selection_locked' |
+	'live' | 'result' | 'standings' | 'champion';
 
 export interface PresentationParticipant {
 	id: string;
@@ -22,6 +25,8 @@ export interface TournamentPresentationState {
 	game_number?: number;
 	p1?: PresentationParticipant;
 	p2?: PresentationParticipant;
+	teams?: { p1: PublicTeamSheet, p2: PublicTeamSheet };
+	team_sheet_side?: 'p1' | 'p2';
 	series_score?: Record<string, number>;
 	winner?: PresentationParticipant | null;
 	tie?: boolean;

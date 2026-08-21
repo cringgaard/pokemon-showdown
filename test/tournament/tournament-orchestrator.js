@@ -134,6 +134,26 @@ describe('TournamentOrchestrator durable deterministic execution', function () {
 		assert.equal(tournament.events.presentation.kind, 'result');
 		assert.equal(playback.status().last_completion_reason, 'timeout');
 	});
+
+	it('shows detailed sheets once per series and Team Preview before every game', async () => {
+		const loaded = makeConfig(temporaryRoot, { bestOf: 3 });
+		const tournament = harness(
+			loaded, path.join(temporaryRoot, 'presentation-results'),
+			fakeExecutor([], options => options.p1.id)
+		);
+		await tournament.orchestrator.run();
+		const presentations = tournament.events.events.filter(event => event.presentation).map(event => event.presentation);
+		const games = tournament.state().completed_games;
+		assert.equal(presentations.filter(state => state.kind === 'team_preview').length, games.length);
+		assert.equal(presentations.filter(state => state.kind === 'selection_locked').length, games.length);
+		assert.equal(presentations.filter(state => state.kind === 'team_sheet').length, 4);
+		for (const game of games) {
+			const kinds = presentations.filter(state => state.game_id === game.id).map(state => state.kind);
+			assert(kinds.indexOf('team_preview') < kinds.indexOf('selection_locked'));
+			assert(kinds.indexOf('selection_locked') < kinds.indexOf('live'));
+		}
+		assert(!JSON.stringify(presentations).includes('team_0'));
+	});
 });
 
 function makeConfig(root, options) {
@@ -167,9 +187,20 @@ function harness(config, output, executor, playback = new TournamentPlaybackCont
 		workerFactory: { audit: { kind: 'host', trusted: true }, create() { throw new Error('unused'); } },
 	}]));
 	const orchestrator = new TournamentOrchestrator({
-		config, outputDirectory: output, participants, eventStore: events, pacing, playback, matchExecutor: executor,
+		config, outputDirectory: output, participants, eventStore: events, pacing, playback,
+		publicTeams: testTeams(config), matchExecutor: executor,
 	});
 	return { orchestrator, events, state: () => orchestrator.stateStore.state };
+}
+
+function testTeams(config) {
+	const pokemon = Array.from({ length: 6 }, (_, index) => ({
+		name: `Pokemon ${index}`, species: 'Incineroar', sprite: 'incineroar', item: 'Sitrus Berry',
+		ability: 'Intimidate', moves: ['Fake Out', 'Flare Blitz', 'Knock Off', 'Protect'],
+	}));
+	return new Map(config.config.participants.map(participant => [participant.id, {
+		participant: { id: participant.id, name: participant.name }, pokemon,
+	}]));
 }
 
 async function waitUntil(predicate) {

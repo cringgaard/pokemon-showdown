@@ -12,6 +12,7 @@ import { ProtocolStore } from './spectator/protocol-store';
 import { SpectatorServer, startReplayServer } from './spectator/server';
 import { TournamentEventStore, TOURNAMENT_EVENT_SCHEMA_VERSION } from './spectator/event-store';
 import { TournamentEventServer } from './spectator/event-server';
+import { publicTeamSheets } from './spectator/public-team-sheet';
 import { loadTournamentConfig } from './orchestrator/config';
 import { TournamentOrchestrator } from './orchestrator/orchestrator';
 import { TournamentPacingController } from './orchestrator/pacing';
@@ -85,7 +86,8 @@ async function main(argv = process.argv.slice(2)) {
 			autoComplete: autoAdvance,
 			timeoutMs: integerOption(args, 'playback-timeout-ms') ?? DEFAULT_PLAYBACK_TIMEOUT_MS,
 		});
-		const server = new TournamentEventServer({ store: eventStore, pacing, playback, port: spectatorPort });
+		const teams = publicTeamSheets(preflight.prepared);
+		const server = new TournamentEventServer({ store: eventStore, pacing, playback, teams, port: spectatorPort });
 		await server.listen();
 		process.stderr.write(`Tournament spectator: ${server.url()}\nOperator controls: ${server.url()}operator\n`);
 		try {
@@ -96,6 +98,7 @@ async function main(argv = process.argv.slice(2)) {
 				eventStore,
 				pacing,
 				playback,
+				publicTeams: teams,
 			}).run();
 			process.stdout.write(`${JSON.stringify({ ...summary, ...result }, null, 2)}\n`);
 			if (!autoAdvance) await waitForSignal();

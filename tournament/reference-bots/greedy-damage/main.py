@@ -22,7 +22,9 @@ def choose_action(state):
     """Score only normalized public state and return one supplied legal action."""
     legal = state["request"]["legal_actions"]
     if state["request"]["kind"] == "team_preview":
-        return legal[0]
+        # Bring 6 / Pick 4: the first two entries lead and the final two are reserves.
+        preferred = {"team": ["team_4", "team_1", "team_0", "team_5"]}
+        return preferred if preferred in legal else legal[0]
 
     def score(response):
         return sum(

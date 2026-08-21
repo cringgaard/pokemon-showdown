@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width">
+<title>Tournament operator</title>
+<style>
+body { font: 18px system-ui; background: #07111f; color: #fff; max-width: 950px; margin: 35px auto; padding: 20px; }
+section { background: #101e31; padding: 18px 22px; margin: 18px 0; border-radius: 14px; }
+button, select { font: inherit; padding: 13px 18px; margin: 6px; border: 0; border-radius: 9px; background: #39a0ff; color: #04101c; font-weight: 800; }
+.secondary { background: #d7e5f5; } a { color: #8ecbff; } pre { background: #06101d; padding: 18px; border-radius: 10px; overflow: auto; }
+</style>
+</head>
+<body>
+<h1>Tournament operator</h1>
+<p>These controls affect presentation only. The simulator, bots, deadlines, persistence, and standings continue independently.</p>
+<section><h2>Pacing</h2><button data-action="advance">Advance</button><button class="secondary" data-action="standings">Show standings</button><button class="secondary" data-action="primary">Return to primary</button></section>
+<section><h2>Presentation</h2><button class="secondary" data-action="team-p1">Show P1 Team Sheet</button><button class="secondary" data-action="team-p2">Show P2 Team Sheet</button><button class="secondary" data-action="team-preview">Show Team Preview</button><p><a href="/current/p1/team" target="_blank">Open P1 team-sheet URL</a> · <a href="/current/p2/team" target="_blank">Open P2 team-sheet URL</a></p></section>
+<section><h2>Playback</h2><p id="playback-summary">Waiting for battle</p><button data-playback="pause">Pause</button><button data-playback="resume">Resume</button><label>Speed <select id="speed"><option value="hyperfast">Hyperfast</option><option value="fast">Fast</option><option value="normal">Normal</option><option value="slow">Slow</option><option value="reallyslow">Really Slow</option></select></label><button class="secondary" data-action="playback-complete">Skip pending playback</button></section>
+<pre id="status">Loading...</pre>
+<script>
+const statusElement = document.querySelector('#status');
+const speedElement = document.querySelector('#speed');
+const playbackSummary = document.querySelector('#playback-summary');
+let current;
+async function refresh() {
+	current = await (await fetch('/api/operator')).json();
+	statusElement.textContent = JSON.stringify(current, null, 2);
+	speedElement.value = current.playback.speed;
+	const label = speedElement.selectedOptions[0]?.textContent || current.playback.speed;
+	playbackSummary.textContent = `${current.playback.state === 'paused' ? 'Paused' : 'Playing'} · ${label} · ${current.playback.turn ? `Turn ${current.playback.turn}` : 'Team Preview'}`;
+}
+async function playback(action, extra = {}) {
+	const protocol_generation = current?.playback?.protocol_generation;
+	await fetch('/api/playback-control', {
+		method: 'POST', headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ action, protocol_generation, ...extra }),
+	});
+	await refresh();
+}
+document.addEventListener('click', async event => {
+	if (event.target.dataset.playback) return playback(event.target.dataset.playback);
+	const action = event.target.dataset.action;
+	if (!action) return;
+	await fetch('/control/' + action, { method: 'POST' });
+	await refresh();
+});
+speedElement.addEventListener('change', () => playback('speed', { speed: speedElement.value }));
+refresh();
+setInterval(refresh, 1000);
+</script>
+</body>
+</html>
