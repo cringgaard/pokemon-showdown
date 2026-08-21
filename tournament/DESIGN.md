@@ -186,7 +186,7 @@ export type OwnPokemonID = `team_${number}`;
 export type OpponentPokemonID = `opponent_${number}`;
 
 export interface BotState {
-    schema_version: 1;
+    schema_version: 2;
     battle: BattleInfo;
     runtime: RuntimeInfo;
     self: OwnSideState;
@@ -278,11 +278,25 @@ export interface OwnPokemonState {
     moves: KnownMove[];
     volatiles: string[];
 }
+
+export interface OpponentActiveState {
+    position: Position;
+    apparent_species: string;
+    team_id: OpponentPokemonID | null;
+    ability: string | null;
+    types: string[] | null;
+    transformation: TransformationState | null;
+    // health/status/item/boost/volatile fields omitted here for brevity
+}
 ```
 
 Do not invent precision for opponents. If Showdown reports opponent HP as a percentage/fraction rather than exact HP, preserve that censorship through `exact: false`.
 
 Open Team Sheets expose only information publicly available under the chosen format. Champions sheets contain species, item, ability, moves, nature, gender, level, and an inert submitted Tera type. They must not expose stats, Stat Points/EVs, IVs, or other simulator-only information. Sheet fields remain immutable set metadata; current active form, types, ability, and transformation are tracked separately from player-visible protocol.
+
+Opponent `apparent_species` always records the visible appearance. `types` is the mechanically known current typing and is `null` when public evidence, including unresolved Illusion, does not establish actual identity/type. Transformation state must not be inferred solely from an unresolved apparent form. A direct public transformation event may establish that the active Pokémon transformed without establishing its hidden typing or ability.
+
+`schema_version: 2` identifies this Champions-compatible participant contract. It is intentionally incompatible with the original Tera-specific milestone schema.
 
 ## 9. Active positions
 
@@ -490,6 +504,8 @@ Combine:
 into immutable `BotState` JSON.
 
 The player's latest `ChoiceRequest` should be authoritative for own-side exact state and current choices. Opponent state must be reconstructed only from public protocol/Open Team Sheet information.
+
+Every opponent switch-in must normalize a publicly identified battle-only form through the configured format Dex. This includes returning Mega Pokémon whose switch message exposes the Mega form but whose immutable OTS entry still contains the base ability.
 
 Never read hidden `Battle`/opponent simulator state to populate the bot state.
 

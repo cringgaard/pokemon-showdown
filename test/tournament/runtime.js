@@ -11,7 +11,7 @@ const legalActions = [
 
 function state(runtime) {
 	return {
-		schema_version: 1,
+		schema_version: 2,
 		battle: { format: 'test', turn: 0, phase: 'team_preview' },
 		runtime,
 		self: { name: 'Bot', team: [], active: {}, side_conditions: {} },

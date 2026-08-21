@@ -1,13 +1,14 @@
 # Champions tournament harness compatibility audit
 
-Status: accepted audit with Workstream A compatibility implementation complete on `champions-harness-compatibility-audit-v1`. Workstream B and snow-team policy remain intentionally unimplemented.
+Status: historical audit of the pre-fix harness at `eeee09826`, followed by the merged Workstream A implementation and its state-contract corrective follow-up. Workstream B and snow-team policy remain intentionally unimplemented.
 
 ## Implementation status
 
 - **A1 complete:** the exact target format is the default, the runner performs a deliberate headless OTS acceptance handshake, and battle state records the resolved `champions` mod.
 - **A2 complete:** request/action APIs are format-neutral; real Mega request flags produce semantic transformation variants; the adapter alone emits raw suffixes; duplicate side-wide Mega use is filtered.
-- **A3 complete:** action, own-state, OTS, history, form, type, and ability metadata use the configured format Dex; Champions OTS public fields are preserved without hidden stats; public opponent Mega state and Illusion uncertainty are tracked.
+- **A3 complete:** action, own-state, OTS, history, form, type, and ability metadata use the configured format Dex; Champions OTS public fields are preserved without hidden stats; public opponent Mega state is normalized both during transformation and on later switch-in; unresolved Illusion exposes appearance without claiming hidden types, ability, or appearance-derived transformation.
 - **A4 acceptance complete for this compatibility milestone:** focused simulator tests cover all five required Mega forms, weather/terrain activation, post-Mega availability, OTS, format-specific data, Staraptor's Ground immunity, Stat Points, information boundaries, and full participant-API matches with both reference bots.
+- **Contract follow-up complete:** `BotState.schema_version` is `2`, and the CLI/compatibility fixture is the exact deterministic-bot design team.
 
 The implementation deliberately does not add the Workstream B deterministic policy or any snow-team heuristic.
 
@@ -19,7 +20,7 @@ Target display name: `[Gen 9 Champions] VGC 2026 Reg M-B`
 
 The exact format ID is `gen9championsvgc2026regmb`, and `Dex.forFormat()` resolves it to the `champions` mod. The simulator correctly implements bring-6/pick-4 doubles, Champions Stat Points, Mega Evolution, the custom Mega forms, and the mechanics sampled in this audit.
 
-The current tournament harness is **not yet compatible enough to be the tournament participant boundary**. Its critical failures are:
+At the audited pre-fix commit, the tournament harness was **not yet compatible enough to be the tournament participant boundary**. Its critical failures were:
 
 1. its default remains Gen 9 VGC 2025 Regulation I;
 2. the exact target format offers consensual, not forced, Open Team Sheets, while the headless runner performs no OTS acceptance handshake;
@@ -28,7 +29,7 @@ The current tournament harness is **not yet compatible enough to be the tourname
 5. opponent post-Mega ability and typing are not tracked correctly; and
 6. the harness uses the base `Dex` for public move metadata instead of the configured format's Dex.
 
-Consequently a current reference bot can complete a Champions match only by never Mega Evolving, and `request.legal_actions` is not the complete authoritative action set promised by the public API.
+Consequently, at the audited commit, a reference bot could complete a Champions match only by never Mega Evolving, and `request.legal_actions` was not the complete authoritative action set promised by the public API. The implementation status above records the resolution of those findings.
 
 ## Exact format and rules
 
@@ -50,6 +51,8 @@ Repository and executable resolution produced:
 The format definition is at `config/formats.ts:311-316`. `Flat Rules` supplies Team Preview, minimum team size 6, and `Picked Team Size = Auto`; doubles resolves Auto to four (`data/mods/champions/rulesets.ts:25-30`, `sim/dex-formats.ts:337-349`).
 
 ## Compatibility findings
+
+In sections A-J, **Current behavior** means behavior observed in the audited pre-fix harness at `eeee09826`, not the post-Workstream-A implementation, unless a paragraph explicitly says otherwise. The recommendations and proof tests are retained as the historical basis for the implemented changes.
 
 ### A. Runtime format selection is wrong by default
 

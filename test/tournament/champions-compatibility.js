@@ -67,6 +67,59 @@ class SemanticMegaPlayer extends BattlePlayer {
 	}
 }
 
+class MegaReentryPlayer extends BattlePlayer {
+	constructor(stream, sideID, observed) {
+		super(stream);
+		this.sideID = sideID;
+		this.tracker = new StateTracker(sideID, FORMAT);
+		this.observed = observed;
+		this.turnRequests = 0;
+	}
+
+	receive(chunk) {
+		this.tracker.consume(chunk);
+		super.receive(chunk);
+	}
+
+	receiveRequest(request) {
+		if (request.wait) return;
+		const teamIDs = this.tracker.teamIDsForRequest(request);
+		const state = buildBotState(this.tracker, request, { format: FORMAT, runtime: RUNTIME });
+		if (request.teamPreview) {
+			this.choose(adaptAction(state.request.legal_actions[0], request, teamIDs));
+			return;
+		}
+		if (request.forceSwitch) {
+			this.choose(adaptAction(state.request.legal_actions[0], request, teamIDs));
+			return;
+		}
+		this.turnRequests++;
+		if (this.sideID === 'p2' && this.turnRequests === 4) this.observed(state);
+		let response;
+		if (this.sideID === 'p1' && this.turnRequests === 1) {
+			response = state.request.legal_actions.find(action =>
+				action.actions.left?.transformation === 'mega' && action.actions.right?.type === 'move' &&
+				!action.actions.right.transformation
+			);
+		} else if (this.sideID === 'p1' && this.turnRequests === 2) {
+			response = state.request.legal_actions.find(action =>
+				action.actions.left?.type === 'switch' && action.actions.left.pokemon === 'team_2' &&
+				action.actions.right?.type === 'move'
+			);
+		} else if (this.sideID === 'p1' && this.turnRequests === 3) {
+			response = state.request.legal_actions.find(action =>
+				action.actions.left?.type === 'switch' && action.actions.left.pokemon === 'team_0' &&
+				action.actions.right?.type === 'move'
+			);
+		}
+		response ||= state.request.legal_actions.find(action =>
+			Object.values(action.actions).every(action => action.type === 'move' && !action.transformation)
+		);
+		assert(response, 'expected the scripted semantic Mega re-entry response');
+		this.choose(adaptAction(response, request, teamIDs));
+	}
+}
+
 function packedTeam(lead) {
 	const secondMega = lead.species === 'Raichu' ?
 		{ species: 'Aggron', item: 'Aggronite', ability: 'Sturdy' } :
@@ -122,6 +175,71 @@ async function observeMega(lead) {
 	}
 }
 
+async function observeMegaReentry() {
+	const battleStream = new BattleStream({ noCatch: true });
+	const streams = getPlayerStreams(battleStream);
+	let reentryState;
+	let complete;
+	const observed = new Promise(resolve => { complete = resolve; });
+	const p1 = new MegaReentryPlayer(streams.p1, 'p1', () => {});
+	const p2 = new MegaReentryPlayer(streams.p2, 'p2', state => {
+		reentryState = state;
+		complete();
+	});
+	const players = Promise.all([p1.start(), p2.start()]);
+	try {
+		await streams.omniscient.write([
+			`>start ${JSON.stringify({ formatid: FORMAT, seed: [5, 6, 7, 8] })}`,
+			`>player p1 ${JSON.stringify({
+				name: 'Mega Re-entry Bot',
+				team: packedTeam({ species: 'Aggron', item: 'Aggronite', ability: 'Sturdy' }),
+			})}`,
+			`>player p2 ${JSON.stringify({
+				name: 'Observer', team: packedTeam({ species: 'Abra', ability: 'Synchronize' }),
+			})}`,
+			'>show-openteamsheets',
+		].join('\n'));
+		let timer;
+		try {
+			await Promise.race([
+				observed,
+				new Promise((resolve, reject) => {
+					timer = setTimeout(() => reject(new Error('Mega re-entry observation timed out')), 5000);
+				}),
+			]);
+		} finally {
+			clearTimeout(timer);
+		}
+		await streams.omniscient.write('>forcewin p1');
+		await players;
+		return reentryState;
+	} finally {
+		if (!battleStream.atEOF) await streams.omniscient.writeEnd();
+	}
+}
+
+function ownMoveRequest() {
+	const pokemon = Array.from({ length: 6 }, (_, index) => ({
+		ident: `p1: Own ${index}`,
+		details: 'Pikachu, L50',
+		condition: '100/100',
+		active: index < 2,
+		stats: { atk: 1, def: 1, spa: 1, spd: 1, spe: 1 },
+		moves: ['protect'],
+		baseAbility: 'static',
+		ability: 'static',
+		item: '',
+		pokeball: 'pokeball',
+	}));
+	return {
+		active: [
+			{ moves: [{ move: 'Protect', id: 'protect', pp: 5, maxpp: 5, target: 'self' }] },
+			{ moves: [{ move: 'Protect', id: 'protect', pp: 5, maxpp: 5, target: 'self' }] },
+		],
+		side: { name: 'Own Bot', id: 'p1', pokemon },
+	};
+}
+
 describe('Champions tournament harness compatibility', function () {
 	this.timeout(30_000);
 
@@ -155,6 +273,18 @@ describe('Champions tournament harness compatibility', function () {
 		});
 	}
 
+	it('normalizes a publicly identified Mega after switching out and back in', async () => {
+		const state = await observeMegaReentry();
+		const opponent = Object.values(state.opponent.active).find(active =>
+			active.apparent_species === 'Aggron-Mega'
+		);
+		assert(opponent);
+		assert.equal(opponent.team_id, 'opponent_0');
+		assert.deepEqual(opponent.types, ['Steel']);
+		assert.equal(opponent.ability, 'filter');
+		assert.deepEqual(opponent.transformation, { kind: 'mega' });
+	});
+
 	it('keeps Mega state Illusion-safe when public identity remains unresolved', () => {
 		const tracker = new StateTracker('p1', FORMAT);
 		const team = Teams.pack([
@@ -163,23 +293,55 @@ describe('Champions tournament harness compatibility', function () {
 		]);
 		tracker.consume([
 			`|showteam|p2|${team}`,
-			'|switch|p2a: Zoroark|Zoroark, L50|100/100',
-			'|-mega|p2a: Zoroark|Zoroark|Aggronite',
+			'|switch|p2a: Aggron|Aggron-Mega, L50|100/100',
 		].join('\n'));
 		assert.equal(tracker.opponentActive.right.teamID, null);
-		assert.equal(tracker.opponentActive.right.apparentSpecies, 'Zoroark');
-		assert.deepEqual(tracker.opponentActive.right.types, ['Dark']);
+		assert.equal(tracker.opponentActive.right.apparentSpecies, 'Aggron-Mega');
+		assert.equal(tracker.opponentActive.right.types, null);
+		assert.equal(tracker.opponentActive.right.transformation, null);
+		assert.equal(tracker.opponentActive.right.ability, null);
+
+		tracker.consume('|-mega|p2a: Aggron|Aggron|Aggronite');
+		assert.equal(tracker.opponentActive.right.types, null);
 		assert.deepEqual(tracker.opponentActive.right.transformation, { kind: 'mega' });
 		assert.equal(tracker.opponentActive.right.ability, null);
+		const state = buildBotState(tracker, ownMoveRequest(), { format: FORMAT, runtime: RUNTIME });
+		assert.equal(state.schema_version, 2);
+		assert.equal(state.opponent.active.right.apparent_species, 'Aggron-Mega');
+		assert.equal(state.opponent.active.right.types, null);
+		assert.deepEqual(state.opponent.active.right.transformation, { kind: 'mega' });
 	});
 
-	it('uses the authoritative Champions form and Stat Point rules', () => {
+	it('uses the exact deterministic-bot team and authoritative Champions rules', () => {
 		Dex.includeData();
 		const dex = Dex.forFormat(FORMAT);
 		const staraptor = dex.species.get('Staraptor-Mega');
 		assert(staraptor.types.includes('Flying'));
 		assert.equal(dex.getImmunity('Ground', staraptor), false);
 		const valid = Teams.import(CHAMPIONS_TEAM);
+		assert.deepEqual(valid.map(set => ({
+			species: set.species,
+			item: set.item,
+			ability: set.ability,
+			nature: set.nature,
+			evs: Object.fromEntries(Object.entries(set.evs).filter(([, value]) => value)),
+			moves: set.moves,
+		})), [
+			{ species: 'Glaceon', item: 'Bright Powder', ability: 'Snow Cloak', nature: 'Calm',
+				evs: { hp: 32, def: 2, spd: 32 }, moves: ['Calm Mind', 'Blizzard', 'Wish', 'Protect'] },
+			{ species: 'Ninetales-Alola', item: 'Icy Rock', ability: 'Snow Warning', nature: 'Timid',
+				evs: { hp: 2, spa: 32, spe: 32 }, moves: ['Aurora Veil', 'Freeze-Dry', 'Encore', 'Protect'] },
+			{ species: 'Maushold', item: 'Chople Berry', ability: 'Friend Guard', nature: 'Calm',
+				evs: { hp: 32, def: 17, spd: 17 }, moves: ['Follow Me', 'Mud-Slap', 'Encore', 'Protect'] },
+			{ species: 'Aggron', item: 'Aggronite', ability: 'Sturdy', nature: 'Careful',
+				evs: { hp: 32, def: 2, spd: 32 }, moves: ['Iron Defense', 'Body Press', 'Heavy Slam', 'Protect'] },
+			{ species: 'Armarouge', item: 'Colbur Berry', ability: 'Flash Fire', nature: 'Modest',
+				evs: { hp: 32, spa: 32, spd: 2 }, moves: ['Wide Guard', 'Ally Switch', 'Armor Cannon', 'Psychic'] },
+			{ species: 'Heliolisk', item: 'Focus Sash', ability: 'Dry Skin', nature: 'Timid',
+				evs: { hp: 2, spa: 32, spe: 32 }, moves: ['Thunderbolt', 'Grass Knot', 'Ally Switch', 'Protect'] },
+		]);
+		assert(valid.every(set => Object.values(set.ivs).every(value => value === 31)));
+		assert(valid.every(set => !set.teraType));
 		assert.equal(TeamValidator.get(FORMAT).validateTeam(valid), null);
 		const invalid = valid.map(set => ({ ...set, evs: { ...set.evs } }));
 		invalid[0].evs.hp = 33;

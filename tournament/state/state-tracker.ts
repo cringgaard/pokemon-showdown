@@ -9,6 +9,12 @@ import { parsePokemonIdent, parseProtocolLine, speciesFromDetails, type Protocol
 
 const OPPONENT_SLOT_TO_POSITION: Record<string, Position> = { a: 'right', b: 'left' };
 
+interface PublicTypeKnowledge {
+	replacement: string[] | null | undefined;
+	added: Set<string>;
+	addedUnknown: boolean;
+}
+
 export class StateTracker {
 	readonly sideID: SideID;
 	readonly dex: ModdedDex;
@@ -32,6 +38,7 @@ export class StateTracker {
 	private readonly ownMaxHP = new Map<OwnPokemonID, number>();
 	private readonly ownObserved = new Map<string, { boosts: typeof EMPTY_BOOSTS, volatiles: Set<string> }>();
 	private readonly opponentCurrentItems = new Map<OpponentPokemonID, string | null>();
+	private readonly publicTypeKnowledge = new WeakMap<ObservedActivePokemon, PublicTypeKnowledge>();
 	private opponentHasIllusion = false;
 
 	constructor(sideID: SideID, format = 'gen9') {
@@ -125,8 +132,8 @@ export class StateTracker {
 		case '-sidestart': this.applySideCondition(event, true); break;
 		case '-sideend': this.applySideCondition(event, false); break;
 		case '-swapsideconditions': this.swapSideConditions(); break;
-		case '-start': this.applyVolatile(event, true); break;
-		case '-end': this.applyVolatile(event, false); break;
+		case '-start':
+		case '-end': this.applyVolatile(event, event.type === '-start'); break;
 		case '-item': this.applyReveal(event, 'item'); break;
 		case '-enditem': this.applyReveal(event, 'item', true); break;
 		case '-ability': this.applyReveal(event, 'ability'); break;
@@ -171,7 +178,7 @@ export class StateTracker {
 		const apparentSpecies = speciesFromDetails(event.args[1] || ident.name);
 		const species = this.dex.species.get(apparentSpecies);
 		const matched = this.opponentHasIllusion ? null : this.findOpponent(apparentSpecies, ident.name);
-		this.opponentActive[position] = {
+		const active: ObservedActivePokemon = {
 			position,
 			ident: event.args[0],
 			name: ident.name,
@@ -182,11 +189,14 @@ export class StateTracker {
 			fainted: (event.args[2] || '').endsWith(' fnt'),
 			item: matched ? this.currentOpponentItem(matched) : null,
 			ability: matched?.ability || null,
-			types: [...species.types],
-			transformation: transformationForSpecies(species),
+			types: matched ? [...species.types] : null,
+			transformation: matched ? transformationForSpecies(species) : null,
 			boosts: { ...EMPTY_BOOSTS },
 			volatiles: new Set(),
 		};
+		this.resetPublicTypeKnowledge(active);
+		this.opponentActive[position] = active;
+		if (matched) this.applyPublicForm(active);
 	}
 
 	private applyReplace(event: ProtocolEvent) {
@@ -218,7 +228,9 @@ export class StateTracker {
 		const active = this.activeFor(event.args[0]);
 		if (!active) return;
 		active.apparentSpecies = speciesFromDetails(event.args[1] || active.apparentSpecies);
-		this.applyPublicForm(active);
+		this.resetPublicTypeKnowledge(active);
+		if (active.teamID) this.applyPublicForm(active);
+		else active.types = null;
 		if (event.type === '-formechange' && effectID(event.args[1]) === 'terastallized') {
 			active.transformation = { kind: 'terastallize' };
 		}
@@ -227,15 +239,17 @@ export class StateTracker {
 	private applyTerastallize(event: ProtocolEvent) {
 		const active = this.activeFor(event.args[0]);
 		if (!active) return;
+		this.resetPublicTypeKnowledge(active);
 		active.transformation = { kind: 'terastallize' };
-		if (event.args[1]) active.types = [event.args[1]];
+		if (event.args[1] && active.teamID) active.types = [event.args[1]];
 	}
 
 	private applyTransformation(event: ProtocolEvent, kind: 'mega') {
 		const active = this.activeFor(event.args[0]);
 		if (!active) return;
+		this.resetPublicTypeKnowledge(active);
 		active.transformation = { kind };
-		this.applyPublicForm(active);
+		if (active.teamID) this.applyPublicForm(active);
 	}
 
 	private applyMove(event: ProtocolEvent) {
@@ -352,6 +366,81 @@ export class StateTracker {
 		const volatile = effectID(event.args[1]);
 		if (active) pokemon.volatiles.add(volatile);
 		else pokemon.volatiles.delete(volatile);
+		const opponent = this.activeFor(event.args[0]);
+		if (opponent && (volatile === 'typechange' || volatile === 'typeadd')) {
+			this.applyPublicTypeEvent(opponent, volatile as 'typechange' | 'typeadd', event.args[2], active);
+		}
+	}
+
+	private applyPublicTypeEvent(
+		active: ObservedActivePokemon, effect: 'typechange' | 'typeadd', value: string | undefined, started: boolean
+	) {
+		const knowledge = this.typeKnowledge(active);
+		const types = this.parsePublicTypes(value);
+		if (effect === 'typechange') {
+			if (started) {
+				knowledge.added.clear();
+				knowledge.addedUnknown = false;
+			}
+			knowledge.replacement = started ? types : undefined;
+		} else if (started) {
+			if (!types) {
+				knowledge.addedUnknown = true;
+			} else {
+				for (const type of types) knowledge.added.add(type);
+			}
+		} else if (types) {
+			for (const type of types) knowledge.added.delete(type);
+			knowledge.addedUnknown = false;
+		} else {
+			// Showdown currently has no standard typeadd end event. If one is emitted
+			// without naming the type, the single public added-type effect has ended.
+			knowledge.added.clear();
+			knowledge.addedUnknown = false;
+		}
+		this.refreshPublicTypes(active);
+	}
+
+	private parsePublicTypes(value: string | undefined) {
+		if (!value) return null;
+		const types = value.split('/').map(type => type.trim()).filter(Boolean);
+		if (!types.length || types.some(type => type === '???' || !this.dex.types.get(type).exists)) return null;
+		return types.map(type => this.dex.types.get(type).name);
+	}
+
+	private refreshPublicTypes(active: ObservedActivePokemon) {
+		const knowledge = this.typeKnowledge(active);
+		if (knowledge.replacement === null || knowledge.addedUnknown) {
+			active.types = null;
+			return;
+		}
+		let types = knowledge.replacement;
+		if (types === undefined) {
+			if (!active.teamID) {
+				active.types = null;
+				return;
+			}
+			const species = this.dex.species.get(active.apparentSpecies);
+			if (!species.exists) {
+				active.types = null;
+				return;
+			}
+			types = species.types;
+		}
+		active.types = [...new Set([...types, ...knowledge.added])];
+	}
+
+	private typeKnowledge(active: ObservedActivePokemon) {
+		let knowledge = this.publicTypeKnowledge.get(active);
+		if (!knowledge) {
+			knowledge = { replacement: undefined, added: new Set(), addedUnknown: false };
+			this.publicTypeKnowledge.set(active, knowledge);
+		}
+		return knowledge;
+	}
+
+	private resetPublicTypeKnowledge(active: ObservedActivePokemon) {
+		this.publicTypeKnowledge.set(active, { replacement: undefined, added: new Set(), addedUnknown: false });
 	}
 
 	private applyReveal(event: ProtocolEvent, property: 'item' | 'ability', ended = false) {
@@ -395,9 +484,13 @@ export class StateTracker {
 	}
 
 	private applyPublicForm(active: ObservedActivePokemon) {
+		if (!active.teamID) {
+			active.types = null;
+			return;
+		}
 		const species = this.dex.species.get(active.apparentSpecies);
 		if (!species.exists) return;
-		active.types = [...species.types];
+		this.refreshPublicTypes(active);
 		const transformation = transformationForSpecies(species);
 		if (transformation) active.transformation = transformation;
 		// A revealed battle-only form's primary ability is static public Dex data. If Illusion
