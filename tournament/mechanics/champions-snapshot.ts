@@ -2,7 +2,7 @@ import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
 
-import { Dex } from '../../sim/dex';
+import { Dex, type ModdedDex } from '../../sim/dex';
 
 export const CHAMPIONS_FORMAT = 'gen9championsvgc2026regmb';
 export const MECHANICS_SNAPSHOT_SCHEMA_VERSION = 1;
@@ -102,6 +102,11 @@ export interface SemanticAnnotations {
 	field: Record<string, Record<string, unknown>>;
 }
 
+/**
+ * Small, explicit interpretations of callback-backed mechanics that later policy
+ * stages need to reason about. Every annotation is covered by B2 regressions
+ * against the format-aware Dex or a simulator-backed behavior test.
+ */
 const SEMANTICS: SemanticAnnotations = {
 	version: SEMANTIC_ANNOTATION_VERSION,
 	abilities: {
@@ -111,7 +116,7 @@ const SEMANTICS: SemanticAnnotations = {
 		defiant: { attack_boost_on_opponent_stat_drop: 2 },
 		competitive: { spa_boost_on_opponent_stat_drop: 2 },
 		contrary: { invert_stat_changes: true },
-		snowcloak: { weather_evasion_multiplier: { snow: 1.25 } },
+		snowcloak: { incoming_accuracy_multiplier_in_weather: { snow: 0.8 } },
 		friendguard: { ally_damage_multiplier: 0.75 },
 		filter: { super_effective_damage_multiplier: 0.75 },
 		flashfire: { fire_immunity: true, fire_power_multiplier_after_activation: 1.5 },
@@ -123,7 +128,7 @@ const SEMANTICS: SemanticAnnotations = {
 	moves: {
 		freezedry: { effectiveness_override: { Water: 2 } },
 		bodypress: { offensive_stat: 'def' },
-		blizzard: { always_hits_in_weather: ['snow', 'hail'] },
+		blizzard: { always_hits_in_weather: ['snow'] },
 		wideguard: { spread_protection: true },
 		followme: { single_target_redirection: true },
 		allyswitch: { swaps_active_positions: true, repeated_use_can_fail: true },
@@ -134,7 +139,7 @@ const SEMANTICS: SemanticAnnotations = {
 		protect: { protection_move: true },
 		encore: { locks_last_move: true },
 		fakeout: { first_turn_only: true },
-		muds lap: {},
+		mudslap: { target_accuracy_change: -1 },
 	},
 	items: {
 		brightpowder: { incoming_accuracy_multiplier: 0.9 },
@@ -228,7 +233,7 @@ export function buildChampionsMechanicsSnapshot(
 			mega_stone: item.megaStone ? { ...item.megaStone } : null,
 			is_berry: item.isBerry,
 			is_choice: !!item.isChoice,
-			boosts: item.boosts && item.boosts !== false ? { ...item.boosts } : {},
+			boosts: item.boosts ? { ...item.boosts } : {},
 		})).sort(compareID),
 		semantics: SEMANTICS,
 	};
@@ -251,7 +256,7 @@ export function stableStringify(value: unknown): string {
 	return JSON.stringify(sortRecursively(value));
 }
 
-function buildTypeChart(dex: ReturnType<typeof Dex.forFormat>) {
+function buildTypeChart(dex: ModdedDex) {
 	const typeNames = dex.types.all().filter(type => type.exists).map(type => type.name).sort();
 	const chart: Record<string, Record<string, number>> = {};
 	for (const attackingType of typeNames) {
