@@ -1,18 +1,20 @@
-import { Dex } from '../../sim/dex';
+import { Dex, type ModdedDex } from '../../sim/dex';
 import type { ChoiceRequest, MoveRequest, PokemonMoveRequestData } from '../../sim/side';
 import type {
 	BotRequest, MoveAction, MoveOption, OwnPokemonID, PokemonAction, Position, SlotRequest,
-	Target, TeamPreviewResponse, TurnResponse,
+	Target, TeamPreviewResponse, TransformationKind, TransformationOption, TurnResponse,
 } from '../api/types';
 
 const POSITIONS: Position[] = ['left', 'right'];
 
 export interface ActionContext {
 	teamIDs: OwnPokemonID[];
+	format: string;
 	teamSize?: number;
 }
 
 export function generateLegalActions(request: ChoiceRequest, context: ActionContext): BotRequest | null {
+	const dex = Dex.forFormat(context.format);
 	if (request.wait) return null;
 	if (request.teamPreview) {
 		const teamSize = request.maxChosenTeamSize || request.side.pokemon.length;
@@ -34,9 +36,9 @@ export function generateLegalActions(request: ChoiceRequest, context: ActionCont
 		const reviving = forced && !!request.side.pokemon[i]?.reviving;
 		const switches = required && !reviving ? getSwitches(request, context, i, forced) : [];
 		const revives = required && reviving ? getRevives(request, context) : [];
-		const moves = !forced && required ? buildMoveOptions(request.active[i], i, request.active.length) : [];
-		const canTera = !forced && required && !!request.active[i]?.canTerastallize;
-		slots[position] = { required, moves, switches, revives, can_terastallize: canTera };
+		const moves = !forced && required ? buildMoveOptions(dex, request.active[i], i, request.active.length) : [];
+		const transformations = !forced && required ? availableTransformations(dex, request, i) : [];
+		slots[position] = { required, moves, switches, revives, available_transformations: transformations };
 		if (!required) {
 			slotActions.push([undefined]);
 			continue;
@@ -47,8 +49,10 @@ export function generateLegalActions(request: ChoiceRequest, context: ActionCont
 			if (move.disabled) continue;
 			const targets: (Target | undefined)[] = move.legal_targets.length ? move.legal_targets : [undefined];
 			for (const target of targets) {
-				actions.push(cleanMoveAction(move.id, target, false));
-				if (canTera) actions.push(cleanMoveAction(move.id, target, true));
+				actions.push(cleanMoveAction(move.id, target));
+				for (const transformation of transformations) {
+					actions.push(cleanMoveAction(move.id, target, transformation.kind));
+				}
 			}
 		}
 		// Participant responses never expose `pass`; omission represents a simulator-forced pass.
@@ -76,9 +80,11 @@ function isMoveSlotRequired(request: MoveRequest, index: number) {
 	return !!request.active[index] && !!pokemon && !pokemon.condition.endsWith(' fnt') && !pokemon.commanding;
 }
 
-function buildMoveOptions(active: PokemonMoveRequestData, activeIndex: number, activeCount: number): MoveOption[] {
+function buildMoveOptions(
+	dex: ModdedDex, active: PokemonMoveRequestData, activeIndex: number, activeCount: number
+): MoveOption[] {
 	return active.moves.map(moveData => {
-		const move = Dex.moves.get(moveData.id);
+		const move = dex.moves.get(moveData.id);
 		return {
 			id: move.id,
 			name: move.name,
@@ -128,10 +134,32 @@ function getRevives(request: Exclude<ChoiceRequest, { wait: true } | { teamPrevi
 	});
 }
 
-function cleanMoveAction(move: string, target: Target | undefined, terastallize: boolean): MoveAction {
+function availableTransformations(dex: ModdedDex, request: MoveRequest, activeIndex: number): TransformationOption[] {
+	const active = request.active[activeIndex];
+	const pokemon = request.side.pokemon[activeIndex];
+	if (!active || !pokemon) return [];
+	const result: TransformationOption[] = [];
+	if (active.canMegaEvo) {
+		const species = dex.species.get(speciesFromDetails(pokemon.details));
+		const resultSpecies = dex.items.get(pokemon.item).megaStone?.[species.baseSpecies];
+		result.push({ kind: 'mega', ...(resultSpecies ? { result_species: resultSpecies } : {}) });
+	}
+	if (active.canMegaEvoX) result.push({ kind: 'mega_x' });
+	if (active.canMegaEvoY) result.push({ kind: 'mega_y' });
+	if (active.canUltraBurst) result.push({ kind: 'ultra' });
+	if (active.canDynamax) result.push({ kind: 'dynamax' });
+	if (active.canTerastallize) result.push({ kind: 'terastallize' });
+	return result;
+}
+
+function speciesFromDetails(details: string) {
+	return details.split(',')[0].trim();
+}
+
+function cleanMoveAction(move: string, target: Target | undefined, transformation?: TransformationKind): MoveAction {
 	const action: MoveAction = { type: 'move', move };
 	if (target) action.target = target;
-	if (terastallize) action.terastallize = true;
+	if (transformation) action.transformation = transformation;
 	return action;
 }
 
@@ -139,12 +167,19 @@ function isJointActionLegal(
 	left: PokemonAction | undefined, right: PokemonAction | undefined, forcedSwitchesNeeded: number | null
 ) {
 	if (left && right && 'pokemon' in left && 'pokemon' in right && left.pokemon === right.pokemon) return false;
-	if (left?.type === 'move' && right?.type === 'move' && left.terastallize && right.terastallize) return false;
+	if (left?.type === 'move' && right?.type === 'move' &&
+		left.transformation && right.transformation &&
+		transformationResource(left.transformation) === transformationResource(right.transformation)) return false;
 	if (forcedSwitchesNeeded !== null) {
 		const switches = [left, right].filter(action => action?.type === 'switch').length;
 		if (switches !== forcedSwitchesNeeded) return false;
 	}
 	return true;
+}
+
+function transformationResource(kind: TransformationKind) {
+	if (kind === 'mega' || kind === 'mega_x' || kind === 'mega_y') return 'mega';
+	return kind;
 }
 
 function permutations<T>(values: T[], length: number): [T, T, T, T][] {

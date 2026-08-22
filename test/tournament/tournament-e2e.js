@@ -4,6 +4,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const assert = require('../assert');
+const { DEFAULT_FORMAT } = require('../../dist/tournament/match/match-runner');
 const { loadTournamentConfig } = require('../../dist/tournament/orchestrator/config');
 const { calculateStandings } = require('../../dist/tournament/orchestrator/model');
 const { TournamentOrchestrator } = require('../../dist/tournament/orchestrator/orchestrator');
@@ -26,7 +27,7 @@ describe('Tournament four-participant end to end', function () {
 			fs.writeFileSync(configPath, JSON.stringify({
 				title: 'Cafeteria Company Cup',
 				subtitle: 'Automated acceptance tournament',
-				format: 'gen9vgc2025regi',
+				format: DEFAULT_FORMAT,
 				seed: 'e2e-2026',
 				runtime: 'host',
 				decision_timeout_ms: 1000,

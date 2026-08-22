@@ -25,7 +25,7 @@ const { TournamentEventStore } = require('../../dist/tournament/spectator/event-
 const { loadSubmission } = require('../../dist/tournament/submissions/submission-loader');
 
 const root = path.resolve(__dirname, '../..');
-const team = fs.readFileSync(path.join(root, 'tournament/fixtures/teams/vgc-reg-i.txt'), 'utf8');
+const team = fs.readFileSync(path.join(root, 'tournament/fixtures/teams/champions-snow.txt'), 'utf8');
 const legalActions = [
 	{ team: ['team_0', 'team_1', 'team_2', 'team_3'] },
 	{ team: ['team_3', 'team_2', 'team_1', 'team_0'] },
@@ -376,7 +376,7 @@ function validBot() {
 
 function state(decisionID) {
 	return {
-		schema_version: 1,
+		schema_version: 2,
 		battle: { format: 'test', turn: 0, phase: 'team_preview' },
 		runtime: { decision_id: decisionID, revision: 0, attempt: 1, previous_error: null, deadline_ms: 2000 },
 		self: { name: 'Bot', team: [], active: {}, side_conditions: {} },

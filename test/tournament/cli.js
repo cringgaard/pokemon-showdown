@@ -11,7 +11,7 @@ const assert = require('../assert');
 const execFileAsync = promisify(execFile);
 const root = path.resolve(__dirname, '../..');
 const cli = path.join(root, 'dist/tournament/cli.js');
-const team = fs.readFileSync(path.join(root, 'tournament/fixtures/teams/vgc-reg-i.txt'), 'utf8');
+const team = fs.readFileSync(path.join(root, 'tournament/fixtures/teams/champions-snow.txt'), 'utf8');
 const bot = fs.readFileSync(path.join(root, 'tournament/reference-bots/random/main.py'), 'utf8');
 
 describe('Tournament participant CLI', function () {

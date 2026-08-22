@@ -11,7 +11,7 @@ const {
 } = require('../../dist/tournament/submissions/submission-loader');
 
 const root = path.resolve(__dirname, '../..');
-const team = fs.readFileSync(path.join(root, 'tournament/fixtures/teams/vgc-reg-i.txt'), 'utf8');
+const team = fs.readFileSync(path.join(root, 'tournament/fixtures/teams/champions-snow.txt'), 'utf8');
 const bot = 'def choose_action(state):\n    return state["request"]["legal_actions"][0]\n';
 
 describe('Tournament participant submissions', () => {
@@ -81,7 +81,7 @@ describe('Tournament participant submissions', () => {
 	});
 
 	it('surfaces TeamValidator rejection for the configured format', () => {
-		const illegal = team.replace('Incineroar @ Sitrus Berry', 'MissingNo @ Sitrus Berry');
+		const illegal = team.replace('Glaceon @ Bright Powder', 'MissingNo @ Bright Powder');
 		assert.throws(() => loadSubmission(submission({ 'team.txt': illegal }), { format: DEFAULT_FORMAT }),
 			error => error instanceof SubmissionValidationError &&
 				/invalid for/.test(error.message) && /MissingNo/.test(error.message));
