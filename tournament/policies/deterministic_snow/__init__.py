@@ -17,6 +17,7 @@ from .mechanics import (
 	MechanicsSnapshot,
 	MoveMechanics,
 	SpeciesMechanics,
+	UnresolvedMechanicError,
 )
 from .trace import DecisionTrace
 
@@ -35,6 +36,7 @@ __all__ = [
 	"MoveMechanics",
 	"PolicyConfig",
 	"SpeciesMechanics",
+	"UnresolvedMechanicError",
 	"build_knowledge_state",
 	"canonicalize_legal_action",
 	"canonicalize_legal_actions",
