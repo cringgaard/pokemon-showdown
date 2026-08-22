@@ -13,6 +13,7 @@ const {
 } = require('../../dist/tournament/mechanics/champions-snapshot');
 
 const ROOT = path.resolve(__dirname, '..', '..');
+const PYTHON_VERIFIER = path.resolve(__dirname, 'deterministic-snow', 'verify_mechanics_snapshot.py');
 
 function byID(values, id) {
 	const result = values.find(value => value.id === id);
@@ -120,26 +121,7 @@ describe('Deterministic snow mechanics integration', () => {
 		const snapshotPath = path.join(directory, 'champions-mechanics.json');
 		try {
 			writeChampionsMechanicsSnapshot(snapshotPath, CHAMPIONS_FORMAT, 'test-commit');
-			const code = [
-				'import sys',
-				'from pathlib import Path',
-				`sys.path.insert(0, ${JSON.stringify(path.join(ROOT, 'tournament', 'policies'))})`,
-				'from deterministic_snow.mechanics import MechanicsSnapshot',
-				`m = MechanicsSnapshot.load(Path(${JSON.stringify(snapshotPath)})).require_champions_format()`,
-				"assert m.move_multiplier('Freeze-Dry', ['Water', 'Flying']) == 4.0",
-				"assert m.is_immune('Body Press', ['Ghost'])",
-				"assert m.wide_guard_blocks('Heat Wave')",
-				"assert not m.wide_guard_blocks('Weather Ball')",
-				"assert m.weather_grants_perfect_accuracy('Blizzard', 'snow')",
-				"assert m.ability_bypasses_accuracy('No Guard')",
-				"assert m.form_after_item_transformation('Aggron', 'Aggronite').name == 'Aggron-Mega'",
-				"assert m.species('Aggron').types == ('Steel', 'Rock')",
-				"assert m.species('Aggron-Mega').types == ('Steel',)",
-				"assert m.semantic('abilities', 'Snow Cloak')['incoming_accuracy_multiplier_in_weather']['snow'] == 0.8",
-				"assert m.semantic('items', 'Bright Powder')['incoming_accuracy_multiplier'] == 0.9",
-				"assert m.semantic('moves', 'Mud-Slap')['target_accuracy_change'] == -1",
-			].join('; ');
-			const result = childProcess.spawnSync('python', ['-c', code], {
+			const result = childProcess.spawnSync('python', [PYTHON_VERIFIER, snapshotPath], {
 				cwd: ROOT,
 				encoding: 'utf8',
 				env: { ...process.env, PYTHONDONTWRITEBYTECODE: '1' },
