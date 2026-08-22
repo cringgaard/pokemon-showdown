@@ -2,6 +2,7 @@ import { execFileSync } from 'child_process';
 import * as path from 'path';
 import type { ObjectReadWriteStream } from '../../lib/streams';
 import { BattleStream, getPlayerStreams } from '../../sim/battle-stream';
+import { Dex, type ModdedDex } from '../../sim/dex';
 import { toID } from '../../sim/dex-data';
 import type { PRNGSeed } from '../../sim/prng';
 import type { ChoiceRequest } from '../../sim/side';
@@ -17,7 +18,7 @@ import {
 } from '../spectator/spectator-publisher';
 import { prepareMatchArtifactDirectory, writeMatchArtifacts } from './artifacts';
 
-export const DEFAULT_FORMAT = 'gen9vgc2025regi@@@!openteamsheets,forceopenteamsheets';
+export const DEFAULT_FORMAT = 'gen9championsvgc2026regmb';
 
 export interface ParticipantSpec {
 	id?: string;
@@ -81,6 +82,7 @@ export class MatchRunner {
 
 	async run(): Promise<MatchResult> {
 		const format = this.options.format || DEFAULT_FORMAT;
+		const dex = Dex.forFormat(format);
 		const p1 = validateParticipant(this.options.p1, format);
 		const p2 = validateParticipant(this.options.p2, format);
 		assertDistinctParticipants(p1, p2);
@@ -112,9 +114,10 @@ export class MatchRunner {
 		try {
 			await Promise.all([p1Runtime.start(), p2Runtime.start()]);
 			const players = Promise.all([p1Runtime.run(), p2Runtime.run(), observe]);
+			const openTeamSheets = shouldAcceptOpenTeamSheets(dex, format) ? '\n>show-openteamsheets' : '';
 			await streams.omniscient.write(`>start ${JSON.stringify({ formatid: format, seed: this.options.seed })}\n` +
 				`>player p1 ${JSON.stringify({ name: p1.name, team: p1.packedTeam })}\n` +
-				`>player p2 ${JSON.stringify({ name: p2.name, team: p2.packedTeam })}`);
+				`>player p2 ${JSON.stringify({ name: p2.name, team: p2.packedTeam })}${openTeamSheets}`);
 			await Promise.race([
 				players,
 				new Promise<never>((resolve, reject) => {
@@ -175,7 +178,7 @@ class MatchPlayerRuntime {
 		this.sideID = sideID;
 		this.stream = stream;
 		this.format = format;
-		this.tracker = new StateTracker(sideID);
+		this.tracker = new StateTracker(sideID, format);
 		this.decisionTimeoutMs = options.decisionTimeoutMs;
 		this.controller = new BotController(participant.bot, {
 			python: options.python,
@@ -253,6 +256,11 @@ class MatchPlayerRuntime {
 		});
 		await this.stream.write(adaptAction(response, request, teamIDs));
 	}
+}
+
+function shouldAcceptOpenTeamSheets(dex: ModdedDex, format: string) {
+	const ruleTable = dex.formats.getRuleTable(dex.formats.get(format));
+	return ruleTable.has('openteamsheets') && !ruleTable.has('forceopenteamsheets');
 }
 
 function validateParticipant(participant: ParticipantSpec, format: string): ValidatedParticipant {

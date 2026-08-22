@@ -1,0 +1,65 @@
+Glaceon @ Bright Powder
+Ability: Snow Cloak
+Level: 50
+Calm Nature
+EVs: 32 HP / 2 Def / 32 SpD
+IVs: 31 HP / 31 Atk / 31 Def / 31 SpA / 31 SpD / 31 Spe
+- Calm Mind
+- Blizzard
+- Wish
+- Protect
+
+Ninetales-Alola @ Icy Rock
+Ability: Snow Warning
+Level: 50
+Timid Nature
+EVs: 2 HP / 32 SpA / 32 Spe
+IVs: 31 HP / 31 Atk / 31 Def / 31 SpA / 31 SpD / 31 Spe
+- Aurora Veil
+- Freeze-Dry
+- Encore
+- Protect
+
+Maushold @ Chople Berry
+Ability: Friend Guard
+Level: 50
+Calm Nature
+EVs: 32 HP / 17 Def / 17 SpD
+IVs: 31 HP / 31 Atk / 31 Def / 31 SpA / 31 SpD / 31 Spe
+- Follow Me
+- Mud-Slap
+- Encore
+- Protect
+
+Aggron @ Aggronite
+Ability: Sturdy
+Level: 50
+Careful Nature
+EVs: 32 HP / 2 Def / 32 SpD
+IVs: 31 HP / 31 Atk / 31 Def / 31 SpA / 31 SpD / 31 Spe
+- Iron Defense
+- Body Press
+- Heavy Slam
+- Protect
+
+Armarouge @ Colbur Berry
+Ability: Flash Fire
+Level: 50
+Modest Nature
+EVs: 32 HP / 32 SpA / 2 SpD
+IVs: 31 HP / 31 Atk / 31 Def / 31 SpA / 31 SpD / 31 Spe
+- Wide Guard
+- Ally Switch
+- Armor Cannon
+- Psychic
+
+Heliolisk @ Focus Sash
+Ability: Dry Skin
+Level: 50
+Timid Nature
+EVs: 2 HP / 32 SpA / 32 Spe
+IVs: 31 HP / 31 Atk / 31 Def / 31 SpA / 31 SpD / 31 Spe
+- Thunderbolt
+- Grass Knot
+- Ally Switch
+- Protect

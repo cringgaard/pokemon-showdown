@@ -58,6 +58,7 @@ describe('Tournament bot state builder', () => {
 		});
 
 		const fainted = state.self.team.find(mon => mon.id === 'team_0');
+		assert.equal(state.schema_version, 2);
 		assert.equal(fainted.health.current, 0);
 		assert.equal(fainted.health.max, 200);
 		assert.equal(fainted.health.exact, true);
