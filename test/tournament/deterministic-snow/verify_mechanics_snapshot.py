@@ -24,8 +24,9 @@ def verify(snapshot_path: Path) -> None:
 	assert mechanics.form_after_item_transformation("Aggron", "Aggronite").name == "Aggron-Mega"
 	assert mechanics.species("Aggron").types == ("Steel", "Rock")
 	assert mechanics.species("Aggron-Mega").types == ("Steel",)
-	assert mechanics.semantic("abilities", "Snow Cloak")["incoming_accuracy_multiplier_in_weather"]["snow"] == 0.8
-	assert mechanics.semantic("items", "Bright Powder")["incoming_accuracy_multiplier"] == 0.9
+	assert mechanics.semantic("abilities", "Snow Cloak")["incoming_accuracy_modifier_in_weather"]["snow"] == [3277, 4096]
+	assert mechanics.semantic("items", "Bright Powder")["incoming_accuracy_modifier"] == [3686, 4096]
+	assert mechanics.semantic("field", "Gravity")["accuracy_multiplier_ratio"] == [5, 3]
 	assert mechanics.semantic("moves", "Mud-Slap")["target_accuracy_change"] == -1
 
 	try:
