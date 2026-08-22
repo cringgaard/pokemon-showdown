@@ -17,8 +17,13 @@ from .serialization import canonical_json
 
 
 MECHANICS_SNAPSHOT_SCHEMA_VERSION = 1
+SEMANTIC_ANNOTATION_VERSION = 1
 CHAMPIONS_FORMAT = "gen9championsvgc2026regmb"
 SPREAD_TARGETS = frozenset({"allAdjacent", "allAdjacentFoes"})
+
+
+class UnresolvedMechanicError(ValueError):
+	"""Raised when a callback-driven mechanic has no safe static interpretation."""
 
 
 def to_id(value: str) -> str:
@@ -98,6 +103,14 @@ class MoveMechanics:
 	def is_spread(self) -> bool:
 		return self.target in SPREAD_TARGETS
 
+	@property
+	def has_dynamic_type(self) -> bool:
+		return "onModifyType" in self.callback_names
+
+	@property
+	def has_dynamic_effectiveness(self) -> bool:
+		return "onEffectiveness" in self.callback_names
+
 
 @dataclass(frozen=True)
 class EffectMechanics:
@@ -131,6 +144,8 @@ class MechanicsSnapshot:
 			gen=_integer(format_value.get("gen"), "format.gen"),
 			game_type=_string(format_value.get("game_type"), "format.game_type"),
 		)
+		source = _mapping(value.get("source"), "source")
+		self.showdown_commit = _optional_string(source.get("showdown_commit"), "source.showdown_commit")
 		self.snapshot_hash = _string(value.get("snapshot_hash"), "snapshot_hash")
 		if verify_hash:
 			_validate_hash(value, self.snapshot_hash)
@@ -153,7 +168,8 @@ class MechanicsSnapshot:
 			"items",
 		)
 		semantics = _mapping(value.get("semantics"), "semantics")
-		if _integer(semantics.get("version"), "semantics.version") != 1:
+		self.semantic_version = _integer(semantics.get("version"), "semantics.version")
+		if self.semantic_version != SEMANTIC_ANNOTATION_VERSION:
 			raise ValueError("Unsupported semantic mechanics annotation version")
 		self._semantics_json = canonical_json(semantics)
 
@@ -210,10 +226,21 @@ class MechanicsSnapshot:
 
 	def move_multiplier(self, move: str | MoveMechanics, defending_types: Iterable[str]) -> float:
 		move_data = self.move(move) if isinstance(move, str) else move
-		overrides = self.semantic("moves", move_data.id).get("effectiveness_override", {})
+		semantics = self.semantic("moves", move_data.id)
+		overrides = semantics.get("effectiveness_override", {})
 		if not isinstance(overrides, Mapping):
 			raise ValueError(f"Malformed effectiveness override for {move_data.id}")
+		if move_data.has_dynamic_type:
+			raise UnresolvedMechanicError(
+				f"{move_data.name} changes type dynamically; resolve its context before type effectiveness"
+			)
+		if move_data.has_dynamic_effectiveness and not overrides:
+			raise UnresolvedMechanicError(
+				f"{move_data.name} has callback-driven effectiveness without a B2 semantic annotation"
+			)
+
 		attack = _canonical_type(self._type_chart, move_data.type)
+		ignore_immunity = move_data.ignore_immunity
 		result = 1.0
 		seen = False
 		for defending_type in defending_types:
@@ -223,6 +250,8 @@ class MechanicsSnapshot:
 				multiplier = float(overrides[defense])
 			else:
 				multiplier = self._type_chart[attack][defense]
+			if multiplier == 0 and _ignores_immunity(ignore_immunity, attack):
+				multiplier = 1.0
 			result *= multiplier
 		if not seen:
 			raise ValueError("At least one defending type is required")
@@ -254,6 +283,15 @@ class MechanicsSnapshot:
 		mapping = dict(stone.mega_stone)
 		result = mapping.get(base.base_species) or mapping.get(base.name)
 		return self.species(result) if result else None
+
+
+def _ignores_immunity(value: bool | Mapping[str, bool], attacking_type: str) -> bool:
+	if value is True:
+		return True
+	if not isinstance(value, Mapping):
+		return False
+	wanted = to_id(attacking_type)
+	return any(to_id(str(type_name)) == wanted and bool(enabled) for type_name, enabled in value.items())
 
 
 def _validate_hash(value: Mapping[str, Any], supplied_hash: str) -> None:
@@ -289,6 +327,9 @@ def _species(value: Mapping[str, Any]) -> SpeciesMechanics:
 		battle_only_value = battle_only
 	else:
 		raise ValueError("species.battle_only must be a string, array, or null")
+	weight_kg = value.get("weight_kg")
+	if isinstance(weight_kg, bool) or not isinstance(weight_kg, (int, float)) or weight_kg < 0:
+		raise ValueError("species.weight_kg must be a non-negative number")
 	return SpeciesMechanics(
 		id=_string(value.get("id"), "species.id"),
 		name=_string(value.get("name"), "species.name"),
@@ -297,7 +338,7 @@ def _species(value: Mapping[str, Any]) -> SpeciesMechanics:
 		types=tuple(str(item) for item in _array(value.get("types"), "species.types")),
 		base_stats=_number_pairs(value.get("base_stats"), "species.base_stats"),
 		abilities=_string_pairs(value.get("abilities"), "species.abilities"),
-		weight_kg=float(value.get("weight_kg", 0)),
+		weight_kg=float(weight_kg),
 		is_mega=bool(value.get("is_mega", False)),
 		battle_only=battle_only_value,
 		changes_from=_optional_string(value.get("changes_from"), "species.changes_from"),
