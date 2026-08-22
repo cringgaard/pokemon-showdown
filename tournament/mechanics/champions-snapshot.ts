@@ -116,7 +116,7 @@ const SEMANTICS: SemanticAnnotations = {
 		defiant: { attack_boost_on_opponent_stat_drop: 2 },
 		competitive: { spa_boost_on_opponent_stat_drop: 2 },
 		contrary: { invert_stat_changes: true },
-		snowcloak: { incoming_accuracy_multiplier_in_weather: { snow: 0.8 } },
+		snowcloak: { incoming_accuracy_modifier_in_weather: { snow: [3277, 4096] } },
 		friendguard: { ally_damage_multiplier: 0.75 },
 		filter: { super_effective_damage_multiplier: 0.75 },
 		flashfire: { fire_immunity: true, fire_power_multiplier_after_activation: 1.5 },
@@ -142,13 +142,13 @@ const SEMANTICS: SemanticAnnotations = {
 		mudslap: { target_accuracy_change: -1 },
 	},
 	items: {
-		brightpowder: { incoming_accuracy_multiplier: 0.9 },
+		brightpowder: { incoming_accuracy_modifier: [3686, 4096] },
 		focussash: { survive_full_hp_lethal_hit: true, consumable: true },
 		chopleberry: { super_effective_type_damage_multiplier: { Fighting: 0.5 }, consumable: true },
 		icyrock: { weather_extension_turns: { snow: 8, hail: 8 } },
 	},
 	field: {
-		gravity: { accuracy_multiplier: 5 / 3, suppresses_evasion: true, grounds_flying: true },
+		gravity: { accuracy_multiplier_ratio: [5, 3], suppresses_evasion: true, grounds_flying: true },
 	},
 };
 
@@ -198,7 +198,7 @@ export function buildChampionsMechanicsSnapshot(
 			target: move.target,
 			flags: Object.keys(move.flags).filter(flag => !!(move.flags as Record<string, unknown>)[flag]).sort(),
 			boosts: { ...(move.boosts || {}) },
-			self_boosts: { ...(move.self?.boosts || {}) },
+			self_boosts: { ...(move.self?.boosts || {}), ...(move.selfBoost?.boosts || {}) },
 			status: move.status || null,
 			volatile_status: move.volatileStatus || null,
 			side_condition: move.sideCondition || null,
