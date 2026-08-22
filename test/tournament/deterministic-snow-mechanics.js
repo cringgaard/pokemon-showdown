@@ -86,7 +86,7 @@ describe('Deterministic snow mechanics integration', () => {
 			'auroraveil', 'freezedry', 'encore',
 			'followme', 'mudslap',
 			'irondefense', 'bodypress', 'heavyslam',
-			'wideguard', 'allyswitch', 'armorcanon', 'psychic',
+			'wideguard', 'allyswitch', 'armorcannon', 'psychic',
 			'thunderbolt', 'grassknot',
 		]) {
 			byID(snapshot.moves, move);
