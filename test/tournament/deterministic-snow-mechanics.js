@@ -63,6 +63,36 @@ describe('Deterministic snow mechanics integration', () => {
 		assert.equal(first.semantics.field.gravity.suppresses_evasion, true);
 	});
 
+	it('keeps every semantic annotation attached to a real format mechanic', () => {
+		const snapshot = buildChampionsMechanicsSnapshot(CHAMPIONS_FORMAT, 'test-commit');
+		for (const id of Object.keys(snapshot.semantics.moves)) byID(snapshot.moves, id);
+		for (const id of Object.keys(snapshot.semantics.abilities)) byID(snapshot.abilities, id);
+		for (const id of Object.keys(snapshot.semantics.items)) byID(snapshot.items, id);
+	});
+
+	it('contains the exact current-six mechanic surfaces', () => {
+		const snapshot = buildChampionsMechanicsSnapshot(CHAMPIONS_FORMAT, 'test-commit');
+		for (const species of ['glaceon', 'ninetalesalola', 'maushold', 'aggron', 'armarouge', 'heliolisk']) {
+			byID(snapshot.species, species);
+		}
+		for (const ability of ['snowcloak', 'snowwarning', 'friendguard', 'sturdy', 'filter', 'flashfire', 'dryskin']) {
+			byID(snapshot.abilities, ability);
+		}
+		for (const item of ['brightpowder', 'icyrock', 'chopleberry', 'aggronite', 'colburberry', 'focussash']) {
+			byID(snapshot.items, item);
+		}
+		for (const move of [
+			'calmmind', 'blizzard', 'wish', 'protect',
+			'auroraveil', 'freezedry', 'encore',
+			'followme', 'mudslap',
+			'irondefense', 'bodypress', 'heavyslam',
+			'wideguard', 'allyswitch', 'armorcanon', 'psychic',
+			'thunderbolt', 'grassknot',
+		]) {
+			byID(snapshot.moves, move);
+		}
+	});
+
 	it('keeps semantic annotations aligned with the actual Champions Dex', () => {
 		const dex = Dex.forFormat(CHAMPIONS_FORMAT);
 		const snapshot = buildChampionsMechanicsSnapshot(CHAMPIONS_FORMAT, 'test-commit');
@@ -105,6 +135,9 @@ describe('Deterministic snow mechanics integration', () => {
 				"assert m.form_after_item_transformation('Aggron', 'Aggronite').name == 'Aggron-Mega'",
 				"assert m.species('Aggron').types == ('Steel', 'Rock')",
 				"assert m.species('Aggron-Mega').types == ('Steel',)",
+				"assert m.semantic('abilities', 'Snow Cloak')['incoming_accuracy_multiplier_in_weather']['snow'] == 0.8",
+				"assert m.semantic('items', 'Bright Powder')['incoming_accuracy_multiplier'] == 0.9",
+				"assert m.semantic('moves', 'Mud-Slap')['target_accuracy_change'] == -1",
 			].join('; ');
 			const result = childProcess.spawnSync('python', ['-c', code], {
 				cwd: ROOT,
