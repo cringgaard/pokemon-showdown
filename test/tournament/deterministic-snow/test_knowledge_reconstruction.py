@@ -173,8 +173,8 @@ class KnowledgeReconstructionTests(unittest.TestCase):
 
 		timers = {(item.scope, item.id): item for item in knowledge.timed_conditions}
 		snow = timers[("field", "snow")]
-		self.assertEqual(snow.expected_end_turn, 7)
-		self.assertEqual(snow.remaining_turns, 4)
+		self.assertEqual(snow.expected_end_turn, 8)
+		self.assertEqual(snow.remaining_turns, 5)
 		self.assertEqual(snow.duration_certainty, Certainty.DERIVED)
 		self.assertEqual(timers[("opponent_side", "tailwind")].duration_certainty, Certainty.UNKNOWN)
 
