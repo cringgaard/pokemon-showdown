@@ -84,6 +84,13 @@ RESPONSE_WEIGHT_IDS = frozenset({
 	"JOINT_SPREAD",
 })
 
+_PIVOT_REASON_ORDER = (
+	"Body Press immunity pivot",
+	"Lightning Rod pivot",
+	"weather reset pivot",
+	"Flash Fire pivot",
+)
+
 
 @dataclass(frozen=True)
 class ResponseGenerationConfig:
@@ -92,7 +99,7 @@ class ResponseGenerationConfig:
 	threatened_hp_fraction: float = 0.50
 
 	def validate(self) -> None:
-		if not self.version:
+		if not isinstance(self.version, str) or not self.version.strip():
 			raise ValueError("response generation version must be non-empty")
 		missing = RESPONSE_WEIGHT_IDS - set(self.weights)
 		unknown = set(self.weights) - RESPONSE_WEIGHT_IDS
@@ -101,7 +108,9 @@ class ResponseGenerationConfig:
 		for key, value in self.weights.items():
 			if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
 				raise ValueError(f"response.weights.{key} must be a finite number")
-		if not 0 <= self.threatened_hp_fraction <= 1:
+		if not isinstance(self.threatened_hp_fraction, (int, float)) or isinstance(self.threatened_hp_fraction, bool):
+			raise ValueError("threatened_hp_fraction must be numeric")
+		if not math.isfinite(float(self.threatened_hp_fraction)) or not 0 <= self.threatened_hp_fraction <= 1:
 			raise ValueError("threatened_hp_fraction must be between zero and one")
 
 
@@ -207,7 +216,7 @@ def generate_opponent_responses(
 	policy_config: PolicyConfig | None = None,
 	config: ResponseGenerationConfig | None = None,
 ) -> OpponentResponseSet:
-	"""Generate a diverse opponent response set without seeing our candidate action."""
+	"""Generate plausible opponent responses without seeing our candidate action."""
 	policy_config = policy_config or default_config()
 	policy_config.validate()
 	config = config or default_response_generation_config()
@@ -221,7 +230,7 @@ def generate_opponent_responses(
 	roster_by_id = {pokemon.id: pokemon for pokemon in knowledge.opponent_roster}
 	threat_by_move = {(item.attacker_position, item.move): item for item in threats.move_threats}
 	fainted_ids = _public_fainted_roster_ids(knowledge)
-	all_actions: list[tuple[str, tuple[OpponentIndividualAction, ...]]] = []
+	individual: list[tuple[str, tuple[OpponentIndividualAction, ...]]] = []
 	for active in sorted((item for item in knowledge.opponent_active if not item.fainted), key=lambda item: item.position):
 		identity = active.established_identity.value
 		if not isinstance(identity, str) or identity not in roster_by_id:
@@ -233,14 +242,14 @@ def generate_opponent_responses(
 		)
 		if not actions:
 			raise ResponseContractError(f"No plausible public actions generated for opponent slot {active.position}")
-		all_actions.append((active.position, actions))
-	if not all_actions:
+		individual.append((active.position, actions))
+	if not individual:
 		raise ResponseContractError("B6 requires at least one live opponent active Pokemon")
 
-	responses = _joint_responses(tuple(all_actions), knowledge, strategy, policy_config, config)
+	responses = _joint_responses(tuple(individual), knowledge, strategy, policy_config, config)
 	if not responses:
 		raise ResponseContractError("No plausible opponent joint responses could be generated")
-	return OpponentResponseSet(config.version, tuple(all_actions), responses)
+	return OpponentResponseSet(config.version, tuple(individual), responses)
 
 
 def _require_ots_turn(knowledge: KnowledgeState) -> None:
@@ -282,7 +291,7 @@ def _individual_actions(
 		except KeyError:
 			continue
 		threat = threat_by_move.get((active.position, move.id))
-		if threat is not None and threat.currently_available is False:
+		if not _move_currently_available(active, roster, move.id, threat, knowledge):
 			continue
 		for target_position, target_id in _move_targets(move, threat, active, knowledge, mechanics):
 			generated.append(_score_move_action(
@@ -296,6 +305,20 @@ def _individual_actions(
 	return _retain_diverse_actions(generated, policy_config.opponent_response.max_individual_actions_per_pokemon)
 
 
+def _move_currently_available(
+	active: OpponentActiveKnowledge,
+	roster: OpponentRosterKnowledge,
+	move_id: str,
+	threat: BaselineMoveThreat | None,
+	knowledge: KnowledgeState,
+) -> bool:
+	if to_id(move_id) == "fakeout":
+		for item in knowledge.fake_out_eligibility:
+			if item.position == active.position and item.pokemon_identity == roster.id:
+				return item.eligible is not False
+	return threat is None or threat.currently_available is not False
+
+
 def _move_targets(
 	move: MoveMechanics,
 	threat: BaselineMoveThreat | None,
@@ -306,17 +329,17 @@ def _move_targets(
 	tags = set(threat.tags) if threat is not None else set()
 	if move.is_spread or _is_self_or_field_move(move, tags, mechanics):
 		return ((None, None),)
-	target_id = to_id(move.target)
-	if target_id in ("adjacentally", "adjacentallyorself"):
+	target_kind = to_id(move.target)
+	if target_kind in ("adjacentally", "adjacentallyorself"):
 		results = []
 		for other in knowledge.opponent_active:
 			if other.fainted:
 				continue
-			if other.position != active.position or target_id == "adjacentallyorself":
+			if other.position != active.position or target_kind == "adjacentallyorself":
 				identity = other.established_identity.value
 				results.append((other.position, identity if isinstance(identity, str) else None))
 		return tuple(results) or ((None, None),)
-	if target_id in ("normal", "any", "adjacentfoe"):
+	if target_kind in ("normal", "any", "adjacentfoe"):
 		own_by_id = {pokemon.id: pokemon for pokemon in knowledge.own_team}
 		return tuple(
 			(position, pokemon_id)
@@ -337,10 +360,7 @@ def _is_self_or_field_move(move: MoveMechanics, tags: set[ThreatCategory], mecha
 		ThreatCategory.PHYSICAL_SETUP, ThreatCategory.SPECIAL_SETUP, ThreatCategory.SPEED_SETUP,
 	}:
 		return True
-	try:
-		return mechanics.semantic("moves", move.id).get("protection_move") is True
-	except (KeyError, ValueError):
-		return False
+	return _is_protection_move(move, mechanics)
 
 
 def _score_move_action(
@@ -362,9 +382,8 @@ def _score_move_action(
 	roles: set[OpponentActionRole] = set()
 	tags = set(threat.tags) if threat is not None else set()
 	target_threat = _target_threat(threat, target_id)
-	damaging = _is_damaging_move(move, mechanics)
 
-	if damaging:
+	if _is_damaging_move(move, mechanics):
 		roles.add(OpponentActionRole.DAMAGE)
 		if move.is_spread:
 			roles.add(OpponentActionRole.SPREAD)
@@ -390,8 +409,8 @@ def _score_move_action(
 			else:
 				score += w["DYNAMIC_DAMAGE_VALUE"]
 		if target_id is not None:
-			target_bonus, target_reasons = _target_importance(target_id, knowledge, strategy, w)
-			score += target_bonus
+			bonus, target_reasons = _target_importance(target_id, knowledge, strategy, w)
+			score += bonus
 			reasons.extend(target_reasons)
 
 	if tags & {ThreatCategory.PHYSICAL_SETUP, ThreatCategory.SPECIAL_SETUP, ThreatCategory.SPEED_SETUP}:
@@ -406,10 +425,6 @@ def _score_move_action(
 		roles.add(OpponentActionRole.CONTROL)
 		score += w["CONTROL_VALUE"]
 		reasons.append("control value")
-		if target_id is not None and not damaging:
-			target_bonus, target_reasons = _target_importance(target_id, knowledge, strategy, w)
-			score += target_bonus
-			reasons.extend(target_reasons)
 		if ThreatCategory.SPEED_CONTROL in control_tags:
 			score += w["SPEED_CONTROL_VALUE"]
 			reasons.append("speed control")
@@ -488,12 +503,14 @@ def _switch_score(
 	if hp_fraction < config.threatened_hp_fraction:
 		score += w["SWITCH_LOW_HP_FACTOR"] * (1.0 - hp_fraction)
 		reasons.append("preserves low-HP active")
-	candidate_species = mechanics.species(candidate.species)
-	candidate_types = tuple(candidate_species.types)
+	try:
+		candidate_types = tuple(mechanics.species(candidate.species).types)
+	except KeyError:
+		candidate_types = ()
 	ability_semantics = _safe_semantic(mechanics, "abilities", candidate.ability or "")
 	own_actives = _live_own_actives(knowledge)
 
-	if any(to_id(pokemon.species).startswith("aggron") and _has_move(pokemon, "bodypress") for pokemon in own_actives):
+	if candidate_types and any(to_id(pokemon.species).startswith("aggron") and _has_move(pokemon, "bodypress") for pokemon in own_actives):
 		try:
 			if mechanics.move_multiplier("bodypress", candidate_types) == 0:
 				score += w["SWITCH_GHOST_BODY_PRESS"]
@@ -511,7 +528,7 @@ def _switch_score(
 	if any(_has_fire_attack(pokemon, mechanics) for pokemon in own_actives) and ability_semantics.get("fire_immunity") is True:
 		score += w["SWITCH_FLASH_FIRE"]
 		reasons.append("Flash Fire pivot")
-	if _resists_current_own_pressure(candidate_types, own_actives, mechanics):
+	if candidate_types and _resists_current_own_pressure(candidate_types, own_actives, mechanics):
 		score += w["SWITCH_RESISTANCE"]
 		reasons.append("resists current pressure")
 	if _candidate_has_offensive_position(candidate, own_actives, mechanics):
@@ -523,28 +540,45 @@ def _switch_score(
 def _retain_diverse_actions(
 	actions: Iterable[OpponentIndividualAction], limit: int
 ) -> tuple[OpponentIndividualAction, ...]:
+	"""Keep tactical categories before filling duplicate target variants."""
 	ordered = sorted(actions, key=lambda item: (-item.plausibility, item.canonical_key))
 	selected: list[OpponentIndividualAction] = []
 	seen_keys: set[str] = set()
+
+	def add(candidate: OpponentIndividualAction | None) -> None:
+		if candidate is None or len(selected) >= limit or candidate.canonical_key in seen_keys:
+			return
+		selected.append(candidate)
+		seen_keys.add(candidate.canonical_key)
+
 	for role in (
 		OpponentActionRole.DAMAGE,
-		OpponentActionRole.SPREAD,
 		OpponentActionRole.PROTECT,
 		OpponentActionRole.SETUP,
 		OpponentActionRole.CONTROL,
+		OpponentActionRole.SPREAD,
 		OpponentActionRole.SWITCH,
 	):
-		candidate = next((item for item in ordered if role in item.roles and item.canonical_key not in seen_keys), None)
-		if candidate is not None and len(selected) < limit:
-			selected.append(candidate)
-			seen_keys.add(candidate.canonical_key)
+		add(next((item for item in ordered if role in item.roles and item.canonical_key not in seen_keys), None))
+
+	represented_pivots = {reason for item in selected for reason in item.reasons if reason in _PIVOT_REASON_ORDER}
+	for reason in _PIVOT_REASON_ORDER:
+		if len(selected) >= limit:
+			break
+		if reason in represented_pivots:
+			continue
+		candidate = next((
+			item for item in ordered
+			if item.kind is OpponentActionKind.SWITCH and reason in item.reasons and item.canonical_key not in seen_keys
+		), None)
+		add(candidate)
+		if candidate is not None:
+			represented_pivots.add(reason)
+
 	for candidate in ordered:
 		if len(selected) >= limit:
 			break
-		if candidate.canonical_key in seen_keys:
-			continue
-		selected.append(candidate)
-		seen_keys.add(candidate.canonical_key)
+		add(candidate)
 	return tuple(sorted(selected, key=lambda item: (-item.plausibility, item.canonical_key)))
 
 
@@ -556,7 +590,7 @@ def _joint_responses(
 	config: ResponseGenerationConfig,
 ) -> tuple[OpponentJointResponse, ...]:
 	pools = [actions for _, actions in individual_actions]
-	candidates: list[tuple[tuple[OpponentIndividualAction, ...], tuple[ResponseArchetype, ...], float, tuple[str, ...]]] = []
+	candidates = []
 	for combination in product(*pools):
 		actions = tuple(sorted(combination, key=lambda item: item.actor_position))
 		if not _valid_joint_switches(actions):
@@ -566,9 +600,9 @@ def _joint_responses(
 		candidates.append((actions, archetypes, score, reasons))
 	if not candidates:
 		return ()
-	candidates.sort(key=lambda item: (-item[2], ";".join(action.canonical_key for action in item[0])))
+	candidates.sort(key=lambda item: (-item[2], _joint_key(item[0])))
 
-	selected: list[tuple[tuple[OpponentIndividualAction, ...], tuple[ResponseArchetype, ...], float, tuple[str, ...]]] = []
+	selected = []
 	seen_keys: set[str] = set()
 	for archetype in (
 		ResponseArchetype.MAX_DAMAGE,
@@ -578,18 +612,16 @@ def _joint_responses(
 		ResponseArchetype.PIVOT_AND_ACT,
 		ResponseArchetype.SPREAD_PRESSURE,
 	):
-		for candidate in candidates:
-			key = ";".join(action.canonical_key for action in candidate[0])
-			if archetype in candidate[1] and key not in seen_keys:
-				selected.append(candidate)
-				seen_keys.add(key)
-				break
+		candidate = next((item for item in candidates if archetype in item[1] and _joint_key(item[0]) not in seen_keys), None)
+		if candidate is not None:
+			selected.append(candidate)
+			seen_keys.add(_joint_key(candidate[0]))
 		if len(selected) >= policy_config.opponent_response.max_joint_responses:
 			break
 	for candidate in candidates:
 		if len(selected) >= policy_config.opponent_response.max_joint_responses:
 			break
-		key = ";".join(action.canonical_key for action in candidate[0])
+		key = _joint_key(candidate[0])
 		if key in seen_keys:
 			continue
 		selected.append(candidate)
@@ -600,6 +632,10 @@ def _joint_responses(
 		OpponentJointResponse(archetypes, actions, round(score, 6), max(0.1, score) / total, reasons)
 		for actions, archetypes, score, reasons in selected
 	)
+
+
+def _joint_key(actions: tuple[OpponentIndividualAction, ...]) -> str:
+	return ";".join(action.canonical_key for action in actions)
 
 
 def _joint_archetypes(
@@ -623,7 +659,7 @@ def _joint_archetypes(
 		bonus += w["JOINT_FOCUS_PRIMARY"]
 		reasons.append("double-targets primary win condition")
 	if any(OpponentActionRole.PROTECT in item for item in roles) and any(
-		(item & {OpponentActionRole.DAMAGE, OpponentActionRole.SETUP, OpponentActionRole.CONTROL})
+		item & {OpponentActionRole.DAMAGE, OpponentActionRole.SETUP, OpponentActionRole.CONTROL}
 		for item in roles
 	):
 		archetypes.append(ResponseArchetype.PROTECT_AND_PROGRESS)
@@ -633,9 +669,7 @@ def _joint_archetypes(
 		archetypes.append(ResponseArchetype.DISRUPT_AND_SETUP)
 		bonus += w["JOINT_DISRUPT_SETUP"]
 		reasons.append("disruption plus setup")
-	if any(OpponentActionRole.SWITCH in item for item in roles) and any(
-		OpponentActionRole.SWITCH not in item for item in roles
-	):
+	if any(OpponentActionRole.SWITCH in item for item in roles) and any(OpponentActionRole.SWITCH not in item for item in roles):
 		archetypes.append(ResponseArchetype.PIVOT_AND_ACT)
 		bonus += w["JOINT_PIVOT_ACT"]
 		reasons.append("pivot plus active partner")
@@ -693,7 +727,10 @@ def _target_importance(
 
 def _primary_target_id(knowledge: KnowledgeState, strategy: RuntimeStrategyAssessment) -> str | None:
 	primary = strategy.scores.primary_plan
-	wanted = "glaceon" if primary == PlanLabel.GLACEON_FORTRESS.value else "aggron" if primary == PlanLabel.AGGRON_FORTRESS.value else None
+	wanted = (
+		"glaceon" if primary == PlanLabel.GLACEON_FORTRESS.value else
+		"aggron" if primary == PlanLabel.AGGRON_FORTRESS.value else None
+	)
 	if wanted is None:
 		return None
 	own_by_id = {pokemon.id: pokemon for pokemon in knowledge.own_team}
@@ -718,9 +755,11 @@ def _is_damaging_move(move: MoveMechanics, mechanics: MechanicsSnapshot) -> bool
 
 def _is_protection_move(move: MoveMechanics, mechanics: MechanicsSnapshot) -> bool:
 	try:
-		return mechanics.semantic("moves", move.id).get("protection_move") is True
+		if mechanics.semantic("moves", move.id).get("protection_move") is True:
+			return True
 	except (KeyError, ValueError):
-		return move.id in ("protect", "detect", "spikyshield", "kingsshield", "banefulbunker")
+		pass
+	return move.id in ("protect", "detect", "spikyshield", "kingsshield", "banefulbunker")
 
 
 def _opponent_is_threatened(
