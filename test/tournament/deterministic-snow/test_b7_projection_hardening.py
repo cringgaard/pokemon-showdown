@@ -5,17 +5,23 @@ import unittest
 
 from test_b7_projection import ProjectionMechanics, joint, make_candidate, move_response, state_with
 
-from deterministic_snow.projection import project_turn
+from deterministic_snow.projection import ProjectionUncertainty, project_turn
 
 
 class HardenedProjectionMechanics(ProjectionMechanics):
 	MOVES = dict(ProjectionMechanics.MOVES)
 	MOVES["blizzard"] = replace(ProjectionMechanics.MOVES["blizzard"], accuracy=70)
+	# Make the submitted Close Combat unambiguously lethal in the synthetic
+	# projection fixture so this regression tests survival, not damage calibration.
+	MOVES["closecombat"] = replace(ProjectionMechanics.MOVES["closecombat"], base_power=1000)
 
 	def semantic(self, category, value):
 		result = dict(super().semantic(category, value))
-		if category == "abilities" and self._id(str(value)) == "lightningrod":
+		key = self._id(str(value))
+		if category == "abilities" and key == "lightningrod":
 			result["spa_boost_on_redirect"] = 1
+		if category == "abilities" and key == "sturdy":
+			result["survive_full_hp_lethal_hit"] = True
 		return result
 
 
@@ -59,6 +65,20 @@ class B7ProjectionHardeningTests(unittest.TestCase):
 			blizzards = [record for record in outcome.action_records if record.action == "blizzard"]
 			self.assertTrue(blizzards)
 			self.assertTrue(all(record.hit_probability == 1.0 for record in blizzards))
+
+	def test_full_hp_base_aggron_sturdy_survives_projected_lethal_move(self):
+		state = state_with("team_3", "team_5", 0, 1)
+		knowledge, candidate = make_candidate(state, {
+			"left": {"type": "move", "move": "bodypress", "target": "opponent_right"},
+			"right": {"type": "move", "move": "protect"},
+		}, self.mechanics)
+		result = project_turn(knowledge, self.mechanics, candidate, joint(
+			move_response("right", "opponent_1", "closecombat", "left", "team_3")
+		))
+		for outcome in result.outcomes:
+			self.assertNotIn("team_3", outcome.own_faints)
+			self.assertIn(ProjectionUncertainty.SURVIVAL, outcome.uncertain_interactions)
+			self.assertTrue(any("sturdy" in effect.lower() for effect in outcome.unresolved_random_effects))
 
 
 if __name__ == "__main__":
