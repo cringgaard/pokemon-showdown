@@ -61,7 +61,9 @@ describe('Deterministic snow mechanics integration', () => {
 		const noGuard = byID(first.abilities, 'noguard');
 		assert(noGuard.callback_names.includes('onAnyAccuracy'));
 		assert.equal(first.semantics.abilities.noguard.accuracy_bypass, true);
-		assert.equal(first.semantics.field.gravity.suppresses_evasion, true);
+		assert.deepEqual(first.semantics.field.gravity.accuracy_multiplier_ratio, [6840, 4096]);
+		assert.equal(first.semantics.field.gravity.grounds_flying, true);
+		assert.equal(Object.hasOwn(first.semantics.field.gravity, 'suppresses_evasion'), false);
 	});
 
 	it('keeps every semantic annotation attached to a real format mechanic', () => {
@@ -102,6 +104,7 @@ describe('Deterministic snow mechanics integration', () => {
 		assert.equal(dex.moves.get('heatwave').target, 'allAdjacentFoes');
 		assert.equal(dex.moves.get('weatherball').target, 'normal');
 		assert.equal(typeof dex.moves.get('freezedry').onEffectiveness, 'function');
+		assert.equal(typeof dex.moves.get('gravity').condition.onModifyAccuracy, 'function');
 		assert.equal(typeof dex.abilities.get('noguard').onAnyAccuracy, 'function');
 		assert.equal(typeof dex.abilities.get('snowcloak').onModifyAccuracy, 'function');
 		assert.equal(typeof dex.abilities.get('defiant').onAfterEachBoost, 'function');
