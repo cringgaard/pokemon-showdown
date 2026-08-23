@@ -25,8 +25,9 @@ def boosts():
 
 
 def own_pokemon(index, species, item, ability, moves):
+	name = "Ninetales" if species == "Ninetales-Alola" else species
 	return {
-		"id": f"team_{index}", "species": species, "name": species, "health": health(160, 160),
+		"id": f"team_{index}", "species": species, "name": name, "health": health(160, 160),
 		"status": None, "fainted": False, "level": 50, "item": item, "ability": ability,
 		"types": ["Ice"], "transformation": None,
 		"stats": {"atk": 80, "def": 100, "spa": 120, "spd": 110, "spe": 100}, "boosts": boosts(),
