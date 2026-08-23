@@ -104,8 +104,8 @@ export interface SemanticAnnotations {
 
 /**
  * Small, explicit interpretations of callback-backed mechanics that later policy
- * stages need to reason about. Every annotation is covered by B2 regressions
- * against the format-aware Dex or a simulator-backed behavior test.
+ * stages need to reason about. The executable format implementation is the
+ * authority; B2 tests pin these annotations directly to its callbacks/data.
  */
 const SEMANTICS: SemanticAnnotations = {
 	version: SEMANTIC_ANNOTATION_VERSION,
@@ -116,23 +116,39 @@ const SEMANTICS: SemanticAnnotations = {
 		defiant: { attack_boost_on_opponent_stat_drop: 2 },
 		competitive: { spa_boost_on_opponent_stat_drop: 2 },
 		contrary: { invert_stat_changes: true },
-		snowcloak: { incoming_accuracy_modifier_in_weather: { snow: [3277, 4096] } },
+		snowcloak: {
+			incoming_accuracy_modifier_in_weather: {
+				hail: [3277, 4096],
+				snowscape: [3277, 4096],
+			},
+		},
 		friendguard: { ally_damage_multiplier: 0.75 },
 		filter: { super_effective_damage_multiplier: 0.75 },
 		flashfire: { fire_immunity: true, fire_power_multiplier_after_activation: 1.5 },
 		dryskin: { water_immunity_and_heal_fraction: 0.25, fire_damage_multiplier: 1.25 },
 		drizzle: { entry_weather: 'raindance' },
 		drought: { entry_weather: 'sunnyday' },
-		snowwarning: { entry_weather: 'snow' },
+		snowwarning: { entry_weather: 'snowscape' },
 	},
 	moves: {
 		freezedry: { effectiveness_override: { Water: 2 } },
 		bodypress: { offensive_stat: 'def' },
-		blizzard: { always_hits_in_weather: ['snow'] },
+		blizzard: {
+			accuracy_by_weather: { hail: true, snowscape: true },
+			weather_accuracy_fully_modeled: true,
+		},
+		thunder: {
+			accuracy_by_weather: { raindance: true, primordialsea: true, sunnyday: 50, desolateland: 50 },
+			weather_accuracy_fully_modeled: true,
+		},
+		hurricane: {
+			accuracy_by_weather: { raindance: true, primordialsea: true, sunnyday: 50, desolateland: 50 },
+			weather_accuracy_fully_modeled: true,
+		},
 		wideguard: { spread_protection: true },
 		followme: { single_target_redirection: true },
 		allyswitch: { swaps_active_positions: true, repeated_use_can_fail: true },
-		auroraveil: { requires_weather: ['snow', 'hail'], side_condition: 'auroraveil' },
+		auroraveil: { requires_weather: ['hail', 'snowscape'], side_condition: 'auroraveil' },
 		wish: { delayed_heal_fraction: 0.5, delay_turns: 1 },
 		grassknot: { weight_based_power: true },
 		heavyslam: { weight_ratio_power: true },
@@ -145,7 +161,7 @@ const SEMANTICS: SemanticAnnotations = {
 		brightpowder: { incoming_accuracy_modifier: [3686, 4096] },
 		focussash: { survive_full_hp_lethal_hit: true, consumable: true },
 		chopleberry: { super_effective_type_damage_multiplier: { Fighting: 0.5 }, consumable: true },
-		icyrock: { weather_extension_turns: { snow: 8, hail: 8 } },
+		icyrock: { weather_extension_turns: { hail: 8, snowscape: 8 } },
 	},
 	field: {
 		gravity: { accuracy_multiplier_ratio: [6840, 4096], grounds_flying: true },
@@ -186,7 +202,7 @@ export function buildChampionsMechanicsSnapshot(
 			required_items: [...(species.requiredItems || [])],
 			is_nonstandard: species.isNonstandard || null,
 		})).sort(compareID),
-		moves: dex.moves.all().filter(move => move.exists).map(move => ({
+		moves: canonicalMoves(dex).map(move => ({
 			id: move.id,
 			name: move.name,
 			type: move.type,
@@ -254,6 +270,11 @@ export function writeChampionsMechanicsSnapshot(
 
 export function stableStringify(value: unknown): string {
 	return JSON.stringify(sortRecursively(value));
+}
+
+function canonicalMoves(dex: ModdedDex) {
+	const ids = [...new Set(dex.moves.all().filter(move => move.exists).map(move => move.id))].sort();
+	return ids.map(id => dex.moves.get(id)).filter(move => move.exists);
 }
 
 function buildTypeChart(dex: ModdedDex) {
