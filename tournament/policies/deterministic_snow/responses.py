@@ -382,8 +382,9 @@ def _score_move_action(
 	roles: set[OpponentActionRole] = set()
 	tags = set(threat.tags) if threat is not None else set()
 	target_threat = _target_threat(threat, target_id)
+	damaging = _is_damaging_move(move, mechanics)
 
-	if _is_damaging_move(move, mechanics):
+	if damaging:
 		roles.add(OpponentActionRole.DAMAGE)
 		if move.is_spread:
 			roles.add(OpponentActionRole.SPREAD)
@@ -408,10 +409,14 @@ def _score_move_action(
 				reasons.append("spread damage pressure")
 			else:
 				score += w["DYNAMIC_DAMAGE_VALUE"]
-		if target_id is not None:
-			bonus, target_reasons = _target_importance(target_id, knowledge, strategy, w)
-			score += bonus
-			reasons.extend(target_reasons)
+
+	# Strategic target importance applies to any targeted action, not only direct
+	# damage. Burning or disabling the primary win condition can be more important
+	# than applying the same control effect to a secondary resource.
+	if target_id is not None:
+		bonus, target_reasons = _target_importance(target_id, knowledge, strategy, w)
+		score += bonus
+		reasons.extend(target_reasons)
 
 	if tags & {ThreatCategory.PHYSICAL_SETUP, ThreatCategory.SPECIAL_SETUP, ThreatCategory.SPEED_SETUP}:
 		roles.add(OpponentActionRole.SETUP)
