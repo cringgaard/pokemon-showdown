@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import copy
 from dataclasses import replace
 import unittest
 
+from test_b6_responses import event, packed_sheet
 from test_b7_projection import ProjectionMechanics, joint, make_candidate, move_response, state_with
 
 from deterministic_snow.projection import ProjectionUncertainty, project_turn
@@ -79,6 +81,48 @@ class B7ProjectionHardeningTests(unittest.TestCase):
 			self.assertNotIn("team_3", outcome.own_faints)
 			self.assertIn(ProjectionUncertainty.SURVIVAL, outcome.uncertain_interactions)
 			self.assertTrue(any("sturdy" in effect.lower() for effect in outcome.unresolved_random_effects))
+
+	def test_percentage_only_opponent_hp_scale_is_not_treated_as_exact_max_hp(self):
+		def projected_damage(display_maximum):
+			state = state_with("team_5", "team_2", 3, 5)
+			state["opponent"]["active"]["left"]["health"] = {
+				"current": display_maximum,
+				"max": display_maximum,
+				"exact": False,
+				"percent": 100,
+			}
+			knowledge, candidate = make_candidate(state, {
+				"left": {"type": "move", "move": "thunderbolt", "target": "opponent_left"},
+				"right": {"type": "move", "move": "protect"},
+			}, self.mechanics)
+			result = project_turn(knowledge, self.mechanics, candidate, joint(
+				move_response("right", "opponent_5", "protect")
+			))
+			return tuple(
+				change.mid_fraction
+				for outcome in result.outcomes
+				for change in outcome.opponent_hp_changes
+				if change.pokemon_id == "opponent_3"
+			)
+
+		self.assertEqual(projected_damage(100), projected_damage(999))
+
+	def test_publicly_consumed_item_is_not_restored_from_ots(self):
+		state = state_with("team_0", "team_2", 2, 1)
+		state["opponent"]["team"][2]["item"] = "gengarite"
+		state["opponent"]["active"]["left"]["item"] = None
+		state["history"][0] = event(0, "showteam", ["p2", packed_sheet(state["opponent"]["team"])])
+		knowledge, candidate = make_candidate(state, {
+			"left": {"type": "move", "move": "protect"},
+			"right": {"type": "move", "move": "protect"},
+		}, self.mechanics)
+		result = project_turn(knowledge, self.mechanics, candidate, joint(
+			move_response("left", "opponent_2", "shadowball", "left", "team_0")
+		))
+		self.assertTrue(all(
+			ProjectionUncertainty.OPPONENT_TRANSFORMATION not in outcome.uncertain_interactions
+			for outcome in result.outcomes
+		))
 
 
 if __name__ == "__main__":
