@@ -27,15 +27,19 @@ def choose_action(state):
 	global _POLICY
 	stderr_trace = os.environ.get(TRACE_STDERR_ENV) == "1"
 	trace_file = os.environ.get(TRACE_FILE_ENV)
-	trace_enabled = stderr_trace or bool(trace_file)
+	trace_level = (
+		TraceLevel.FULL if trace_file else
+		TraceLevel.TOP_CANDIDATES if stderr_trace else
+		TraceLevel.NONE
+	)
 	try:
 		if _POLICY is None:
 			_POLICY = SnowPolicy.from_mechanics_path(
 				default_mechanics_path(),
-				trace_level=TraceLevel.TOP_CANDIDATES if trace_enabled else TraceLevel.NONE,
+				trace_level=trace_level,
 			)
 		decision = _POLICY.decide(state)
-		if trace_enabled and decision.trace is not None:
+		if trace_level is not TraceLevel.NONE and decision.trace is not None:
 			line = decision.trace.to_json() + "\n"
 			if stderr_trace:
 				sys.stderr.write(line)
