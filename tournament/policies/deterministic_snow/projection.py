@@ -422,9 +422,10 @@ def _apply_transformations(
 			if actor is None:
 				continue
 			_transform(actor, mechanics)
+			_apply_transform_ability(branch, actor, mechanics)
 
-	# The opponent's B6 response predates B7 and intentionally has no hidden
-	# transformation choice. Branch over publicly possible item transformations.
+	# The opponent's B6 response intentionally contains move/switch choices only.
+	# Branch over publicly possible item transformations before move ordering.
 	output: list[_Branch] = []
 	for branch in branches:
 		if _opponent_already_transformed(knowledge, branch, mechanics):
@@ -451,7 +452,9 @@ def _apply_transformations(
 			clone.weight /= len(variants)
 			clone.uncertainties.add(ProjectionUncertainty.OPPONENT_TRANSFORMATION)
 			if selected is not None:
-				_transform(clone.positions["opponent"][selected], mechanics)
+				actor = clone.positions["opponent"][selected]
+				_transform(actor, mechanics)
+				_apply_transform_ability(clone, actor, mechanics)
 			output.append(clone)
 			if len(output) >= config.max_projection_branches:
 				break
@@ -496,6 +499,16 @@ def _transform(actor: _PokemonState, mechanics: MechanicsSnapshot) -> None:
 	actor.weight_kg = form.weight_kg
 	abilities = dict(form.abilities)
 	actor.ability = abilities.get("0") or next(iter(abilities.values()), actor.ability)
+
+
+def _apply_transform_ability(branch: _Branch, actor: _PokemonState, mechanics: MechanicsSnapshot) -> None:
+	semantics = _safe_semantic(mechanics, "abilities", actor.ability)
+	weather = semantics.get("entry_weather")
+	if isinstance(weather, str) and weather:
+		branch.weather = weather
+	terrain = semantics.get("entry_terrain")
+	if isinstance(terrain, str) and terrain:
+		branch.field_conditions.add(terrain)
 
 
 def _move_intents(
@@ -670,8 +683,10 @@ def _execute_intent(
 				f"{intent.side}:{intent.actor_id}:{move.id}->{target.pokemon_id}:hit_probability={hit_probability:.4f}"
 			)
 		damage = _damage_fraction(branch, actor, target, move, mechanics, config)
+		move_affected = True
 		if damage is not None:
 			low, mid, high, source = damage
+			move_affected = source not in {"type_or_ability_immunity", "ability_immunity"}
 			expected_low = low if hit_probability >= 1.0 else 0.0
 			expected_mid = mid * hit_probability
 			expected_high = high
@@ -684,11 +699,11 @@ def _execute_intent(
 			branch.uncertainties.add(ProjectionUncertainty.UNKNOWN_DYNAMIC_EFFECT)
 			branch.random_effects.append(f"{move.id}:damage unresolved")
 
-		if hit_probability >= 1.0:
+		_apply_absorb_ability_effects(branch, target, move, mechanics)
+		if hit_probability >= 1.0 and move_affected:
 			_apply_target_effects(branch, intent, actor, target, move, semantics)
-		else:
-			if move.status or move.volatile_status or move.boosts:
-				branch.uncertainties.add(ProjectionUncertainty.SECONDARY_EFFECT)
+		elif hit_probability < 1.0 and (move.status or move.volatile_status or move.boosts):
+			branch.uncertainties.add(ProjectionUncertainty.SECONDARY_EFFECT)
 		_record(branch, intent, original_target_id, target.pokemon_id, None, redirected, hit_probability, ())
 
 	_apply_self_effects(branch, intent, actor, move)
@@ -716,16 +731,13 @@ def _resolve_targets(
 		return []
 	original_target_id = intent.original_target_id or original.pokemon_id
 
-	# Follow Me / equivalent active move redirection applies to eligible single-target
-	# attacks before ability redirection. B2 can add redirection immunity semantics later.
 	if target_side != intent.side and _single_target_redirection_eligible(move):
 		redirect_id = branch.redirection.get(target_side)
 		if redirect_id:
 			redirect = _find_actor(branch, target_side, redirect_id)
 			if redirect is not None and not redirect.fainted:
 				return [(redirect, original_target_id, redirect.pokemon_id != original_target_id)]
-		electric = to_id(move.type) == "electric"
-		if electric:
+		if to_id(move.type) == "electric":
 			for target in branch.positions[target_side].values():
 				ability = _safe_semantic(mechanics, "abilities", target.ability)
 				if ability.get("electric_redirection") is True and not target.fainted:
@@ -815,6 +827,27 @@ def _apply_target_effects(
 	) and not target.fainted:
 		branch.flinched.add(target.pokemon_id)
 		branch.status_changes.append(ProjectedStatusChange(target.side, target.pokemon_id, "flinch", "volatile", move.id))
+
+
+def _apply_absorb_ability_effects(
+	branch: _Branch,
+	target: _PokemonState,
+	move: MoveMechanics,
+	mechanics: MechanicsSnapshot,
+) -> None:
+	ability = _safe_semantic(mechanics, "abilities", target.ability)
+	move_type = to_id(move.type)
+	if move_type == "electric" and ability.get("electric_immunity") is True:
+		boost = ability.get("spa_boost_on_redirect")
+		if isinstance(boost, int) and not isinstance(boost, bool) and boost:
+			_change_boost(branch, target, "spa", boost, target.ability or "electric_immunity")
+	if move_type == "water":
+		heal = _number(ability.get("water_immunity_and_heal_fraction"))
+		if heal is not None and heal > 0:
+			target.hp_fraction = min(1.0, target.hp_fraction + heal)
+			branch.status_changes.append(ProjectedStatusChange(
+				target.side, target.pokemon_id, "ability_heal", "heal", target.ability or "water_immunity",
+			))
 
 
 def _apply_self_effects(branch: _Branch, intent: _MoveIntent, actor: _PokemonState, move: MoveMechanics) -> None:
@@ -915,7 +948,6 @@ def _damage_fraction(
 		return 0.0, 0.0, 0.0, "ability_immunity"
 	level = max(1, attacker.level)
 	base_damage = (((2 * level / 5 + 2) * base_power * offense / defense) / 50 + 2)
-	# Opponent max HP is hidden. Use a neutral base-stat proxy if exact HP is unavailable.
 	if target.max_hp and target.max_hp > 0:
 		hp_scale = target.max_hp
 	else:
@@ -998,6 +1030,8 @@ def _defensive_multiplier(
 	multiplier = 1.0
 	ability = _safe_semantic(mechanics, "abilities", target.ability)
 	move_type = to_id(move.type)
+	if move_type == "electric" and ability.get("electric_immunity") is True:
+		return 0.0
 	if move_type == "fire" and ability.get("fire_immunity") is True:
 		return 0.0
 	if move_type == "water" and "water_immunity_and_heal_fraction" in ability:
@@ -1044,8 +1078,9 @@ def _hit_probability(
 	target_ability = _safe_semantic(mechanics, "abilities", target.ability)
 	if attacker_ability.get("accuracy_bypass") is True or target_ability.get("accuracy_bypass") is True:
 		return 1.0
+	weather = _canonical_weather(branch.weather)
 	try:
-		if mechanics.weather_grants_perfect_accuracy(move, branch.weather):
+		if mechanics.weather_grants_perfect_accuracy(move, weather):
 			return 1.0
 	except (KeyError, ValueError, UnresolvedMechanicError):
 		pass
@@ -1054,13 +1089,18 @@ def _hit_probability(
 		base *= _accuracy_stage_multiplier(attacker.boosts.get("accuracy", 0))
 	if not move.ignore_evasion:
 		base /= _accuracy_stage_multiplier(target.boosts.get("evasion", 0))
-	gravity = "gravity" in {to_id(value) for value in branch.field_conditions}
-	if gravity:
-		base *= 6840.0 / 4096.0
+	if "gravity" in {to_id(value) for value in branch.field_conditions}:
+		gravity = _safe_semantic(mechanics, "field", "gravity")
+		value = _ratio(gravity.get("accuracy_multiplier_ratio"))
+		if value is None:
+			branch.uncertainties.add(ProjectionUncertainty.UNKNOWN_DYNAMIC_EFFECT)
+			branch.random_effects.append("gravity:accuracy multiplier unresolved")
+		else:
+			base *= value
 	incoming_weather = target_ability.get("incoming_accuracy_modifier_in_weather")
 	if isinstance(incoming_weather, Mapping) and branch.weather:
-		for weather, ratio in incoming_weather.items():
-			if to_id(str(weather)) == to_id(branch.weather):
+		for annotated_weather, ratio in incoming_weather.items():
+			if _weather_matches(str(annotated_weather), branch.weather):
 				value = _ratio(ratio)
 				if value is not None:
 					base *= value
@@ -1076,15 +1116,24 @@ def _stat_stage_multiplier(stage: int) -> float:
 	return (2 + stage) / 2 if stage >= 0 else 2 / (2 - stage)
 
 
+def _canonical_weather(weather: str | None) -> str | None:
+	if not weather:
+		return None
+	weather_id = to_id(weather)
+	if weather_id in {"snow", "snowscape", "hail"}:
+		return "snowscape"
+	return weather_id
+
+
+def _weather_matches(left: str | None, right: str | None) -> bool:
+	return _canonical_weather(left) == _canonical_weather(right)
+
+
 def _weather_requirement_met(weather: str | None, required: Iterable[object]) -> bool:
 	if not weather:
 		return False
-	current = to_id(weather)
-	allowed = {to_id(str(value)) for value in required}
-	if current == "snow":
-		current = "snowscape"
-	if current == "hail" and "snowscape" in allowed:
-		return True
+	current = _canonical_weather(weather)
+	allowed = {_canonical_weather(str(value)) for value in required}
 	return current in allowed
 
 
@@ -1096,10 +1145,11 @@ def _accuracy_stage_multiplier(stage: int) -> float:
 
 
 def _apply_end_of_turn(branch: _Branch, knowledge: KnowledgeState, mechanics: MechanicsSnapshot) -> None:
-	for position, heal_fraction in _pending_wishes(knowledge).items():
+	for position, heal_hp in _pending_wishes(knowledge).items():
 		target = branch.positions["own"].get(position)
 		if target is None or target.fainted:
 			continue
+		heal_fraction = heal_hp / target.max_hp if target.max_hp and target.max_hp > 0 else 0.5
 		target.hp_fraction = min(1.0, target.hp_fraction + heal_fraction)
 		branch.status_changes.append(ProjectedStatusChange("own", target.pokemon_id, "wish_heal", "heal", "wish"))
 	for side in ("own", "opponent"):
@@ -1118,17 +1168,35 @@ def _apply_end_of_turn(branch: _Branch, knowledge: KnowledgeState, mechanics: Me
 
 
 def _pending_wishes(knowledge: KnowledgeState) -> dict[str, float]:
-	# Wish heals the same active slot at the end of the next turn. Own HP is exact;
-	# use a half-maximum-health fraction for the current occupant as a strategic proxy.
-	result = {}
-	for observation in knowledge.history.move_observations:
-		if observation.turn != knowledge.turn - 1 or to_id(observation.move) != "wish":
+	"""Recover own Wish's cast slot from the raw public event.
+
+	B3 deliberately canonicalizes move actors to identity (dropping slot letters),
+	while Wish resolves on the slot occupied one turn later. The raw public move
+	event safely preserves pXa/pXb, so B7 uses it only for this slot-bound mechanic.
+	"""
+	own_by_name = {}
+	for pokemon in knowledge.own_team:
+		own_by_name[to_id(pokemon.name)] = pokemon
+		own_by_name[to_id(pokemon.species)] = pokemon
+	result: dict[str, float] = {}
+	for event in knowledge.history.events:
+		if event.turn != knowledge.turn - 1 or event.type != "move":
 			continue
-		actor = observation.actor.split(":", 1)[0].strip()
-		if actor.endswith("a"):
-			result["left"] = 0.5
-		elif actor.endswith("b"):
-			result["right"] = 0.5
+		args = event.data.get("args", [])
+		if not isinstance(args, list) or len(args) < 2 or to_id(str(args[1])) != "wish":
+			continue
+		actor = str(args[0])
+		if ":" not in actor:
+			continue
+		ident, name = actor.split(":", 1)
+		pokemon = own_by_name.get(to_id(name.strip()))
+		if pokemon is None:
+			continue
+		heal_hp = max(1.0, float(pokemon.health.maximum) / 2.0)
+		if ident.strip().endswith("a"):
+			result["left"] = heal_hp
+		elif ident.strip().endswith("b"):
+			result["right"] = heal_hp
 	return result
 
 
@@ -1200,7 +1268,7 @@ def _other_side(side: str) -> str:
 
 
 def _is_snow(weather: str | None) -> bool:
-	return bool(weather and to_id(weather) in {"snow", "snowscape", "hail"})
+	return bool(weather and _canonical_weather(weather) == "snowscape")
 
 
 def _safe_semantic(mechanics: MechanicsSnapshot, category: str, value: str | None) -> dict[str, object]:
