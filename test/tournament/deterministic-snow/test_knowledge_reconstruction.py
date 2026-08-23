@@ -60,16 +60,20 @@ def state_fixture():
 		event(0, "-weather", ["Snow"], kwargs={"from": "ability: Snow Warning", "of": "p1a: Ninetales"}),
 		event(0, "switch", ["p2a: Incineroar", "Incineroar, L50", "100/100"]),
 		event(0, "switch", ["p2b: Tyranitar", "Tyranitar, L50", "100/100"]),
+		event(0, "turn", ["1"]),
 		event(1, "move", ["p2a: Incineroar", "Fake Out", "p1a: Ninetales"]),
 		event(1, "-damage", ["p1a: Ninetales", "120/160"]),
 		event(1, "move", ["p1a: Ninetales", "Protect", "p1a: Ninetales"]),
+		event(1, "turn", ["2"]),
 		event(2, "switch", ["p2a: Pelipper", "Pelipper, L50", "100/100"]),
 		event(2, "move", ["p2b: Tyranitar", "Protect", "p2b: Tyranitar"]),
 		event(2, "move", ["p1a: Ninetales", "Freeze-Dry", "p2a: Pelipper"]),
 		event(2, "move", ["p2a: Pelipper", "Hydro Pump", "p1a: Ninetales"]),
 		event(2, "-damage", ["p1a: Ninetales", "80/160"]),
+		event(2, "turn", ["3"]),
 		event(3, "move", ["p2b: Tyranitar", "Protect", "p2b: Tyranitar"]),
 		event(3, "switch", ["p2a: Incineroar", "Incineroar, L50", "100/100"]),
+		event(3, "turn", ["4"]),
 	]
 	return {
 		"schema_version": 2,
@@ -193,6 +197,20 @@ class KnowledgeReconstructionTests(unittest.TestCase):
 		self.assertEqual(incineroar.certainty, Certainty.DERIVED)
 		self.assertFalse(eligibility["opponent_1"].known_fake_out)
 		self.assertFalse(eligibility["opponent_1"].eligible)
+
+	def test_fake_out_expires_after_first_turn_even_if_user_never_moved(self):
+		state = state_fixture()
+		state["battle"]["turn"] = 2
+		state["history"] = [
+			event(0, "showteam", ["p2", "synthetic"]),
+			event(0, "switch", ["p2a: Incineroar", "Incineroar, L50", "100/100"]),
+			event(0, "turn", ["1"]),
+			event(1, "cant", ["p2a: Incineroar", "flinch"]),
+			event(1, "turn", ["2"]),
+		]
+		knowledge = build_knowledge_state(state, FakeMechanics())
+		eligibility = {item.pokemon_identity: item for item in knowledge.fake_out_eligibility}
+		self.assertFalse(eligibility["opponent_0"].eligible)
 
 	def test_b3_state_round_trips_deterministically(self):
 		first = build_knowledge_state(state_fixture(), FakeMechanics())
