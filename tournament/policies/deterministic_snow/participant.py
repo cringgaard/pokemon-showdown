@@ -18,13 +18,16 @@ from deterministic_snow.policy import (  # noqa: E402
 from deterministic_snow.trace import TraceLevel  # noqa: E402
 
 
+TRACE_FILE_ENV = "DETERMINISTIC_SNOW_TRACE_FILE"
 _POLICY: SnowPolicy | None = None
 
 
 def choose_action(state):
-	"""Return one legal BotResponse; build traces only when stderr tracing is enabled."""
+	"""Return one legal BotResponse and optionally emit a structured decision trace."""
 	global _POLICY
-	trace_enabled = os.environ.get(TRACE_STDERR_ENV) == "1"
+	stderr_trace = os.environ.get(TRACE_STDERR_ENV) == "1"
+	trace_file = os.environ.get(TRACE_FILE_ENV)
+	trace_enabled = stderr_trace or bool(trace_file)
 	try:
 		if _POLICY is None:
 			_POLICY = SnowPolicy.from_mechanics_path(
@@ -33,8 +36,15 @@ def choose_action(state):
 			)
 		decision = _POLICY.decide(state)
 		if trace_enabled and decision.trace is not None:
-			sys.stderr.write(decision.trace.to_json() + "\n")
-			sys.stderr.flush()
+			line = decision.trace.to_json() + "\n"
+			if stderr_trace:
+				sys.stderr.write(line)
+				sys.stderr.flush()
+			if trace_file:
+				path = Path(trace_file).expanduser().resolve()
+				path.parent.mkdir(parents=True, exist_ok=True)
+				with path.open("a", encoding="utf-8") as handle:
+					handle.write(line)
 		return decision.response
 	except BaseException:
 		# The generic JSONL bridge transports the exception to BotController, but
