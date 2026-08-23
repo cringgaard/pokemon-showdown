@@ -42,9 +42,10 @@ Opponent response generation never receives the candidate action being evaluated
 - `features.py` / `scoring.py` — B8 stable semantic features and swappable per-response scorer.
 - `aggregation.py` — B9 expected/credible-bad-case aggregation, cross-response robustness/fragility, tactical score adjustments and deterministic ranking.
 - `policy.py` — B10 request routing, runtime degradation, full turn orchestration, forced replacement selection, traces and `choose_action(state)`.
-- `participant.py` — thin worker-loadable wrapper suitable as the participant bot module inside this repository.
+- `orchestration_config.py` — strict versioned B10 response-budget and forced-replacement preference parameters.
+- `participant.py` — worker-loadable participant wrapper; it avoids trace construction unless stderr tracing is explicitly enabled.
 - `actions.py` — stable IDs for actions already supplied by `request.legal_actions`; it never generates legality.
-- `config.py` — named thresholds/strategy/runtime/response parameters.
+- `config.py` — named thresholds/strategy/runtime/response parameters shared by earlier policy layers.
 - `trace.py` — structured decision traces for experiments/regressions; traces are not part of `BotResponse`.
 
 ## B10 request routing
@@ -59,11 +60,11 @@ turn          → B3/B4 → one B6 set → every legal candidate through B7/B8 �
 forced_switch → deterministic public replacement scorer over legal actions only
 ```
 
-Forced replacement is intentionally separate from B6/B7 because Showdown is not asking both sides for a simultaneous ordinary turn. The replacement selector uses current public resource values, primary-plan roles, public OTS attack typing, weather-reset value and simple pair synergy, but it still chooses exclusively from `request.legal_actions`.
+Forced replacement is intentionally separate from B6/B7 because Showdown is not asking both sides for a simultaneous ordinary turn. The replacement selector uses current public resource values, primary-plan roles, public OTS attack typing, weather-reset value and simple pair synergy, but it still chooses exclusively from `request.legal_actions`. Its numeric preferences live in the exported `OrchestrationConfig` rather than being hidden in orchestration control flow.
 
 ## Runtime modes
 
-`state.runtime.deadline_ms` is the remaining decision budget supplied by the tournament controller. B10 chooses a mode from the existing `PolicyConfig.runtime` thresholds:
+`state.runtime.deadline_ms` is the remaining decision budget supplied by the tournament controller. B10 chooses a mode from the existing `PolicyConfig.runtime` thresholds. The degraded response caps are named/versioned in `OrchestrationConfig`:
 
 - `FULL`: normal configured B6 caps (currently up to 4 individual actions per opponent and 8 joint responses).
 - `MEDIUM`: at most 3 individual actions and 4 joint responses.
@@ -111,4 +112,4 @@ The Python consumer verifies the embedded SHA-256 hash before accepting it. The 
 
 Inside this repository, `tournament/policies/deterministic_snow/participant.py` can be passed to the generic Python worker. A standalone submission can use an equivalent root `main.py` wrapper and package the policy plus generated mechanics JSON.
 
-Set `DETERMINISTIC_SNOW_TRACE_STDERR=1` to emit structured decision traces to stderr. Stdout remains reserved for the worker JSONL protocol.
+Set `DETERMINISTIC_SNOW_TRACE_STDERR=1` to enable TOP_CANDIDATES trace construction and emit those structured traces to stderr. With the variable unset, the production participant uses `TraceLevel.NONE` so normal decisions do not pay trace-construction cost. Stdout remains reserved for the worker JSONL protocol.
