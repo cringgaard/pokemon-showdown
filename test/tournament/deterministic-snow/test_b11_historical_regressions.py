@@ -78,8 +78,12 @@ class B11Mechanics(B10Mechanics):
 		return result
 
 
+def public_opponent_hp(percent):
+	return {"current": percent, "max": 100, "exact": False, "percent": float(percent)}
+
+
 def current_team_state(own_left, own_right, opponent_left=0, opponent_right=1):
-	"""Return the established B7 state with the checked-in current-six moves."""
+	"""Return a current-six state while keeping opponent HP public percentage-only."""
 	state = state_with(own_left, own_right, opponent_left, opponent_right)
 	state["self"]["team"][1]["moves"] = [
 		{"id": move, "name": move}
@@ -89,6 +93,8 @@ def current_team_state(own_left, own_right, opponent_left=0, opponent_right=1):
 		{"id": move, "name": move}
 		for move in ("wideguard", "allyswitch", "armorcannon", "psychic")
 	]
+	for active in state["opponent"]["active"].values():
+		active["health"] = public_opponent_hp(active["health"]["percent"])
 	return state
 
 
@@ -277,7 +283,7 @@ class B11HistoricalRegressionTests(unittest.TestCase):
 		state["self"]["team"][3]["health"] = hp(0, 160)
 		state["self"]["team"][3]["fainted"] = True
 		for position in ("left", "right"):
-			state["opponent"]["active"][position]["health"] = hp(10, 100)
+			state["opponent"]["active"][position]["health"] = public_opponent_hp(10)
 		partner_protect = {"type": "move", "move": "protect"}
 		blizzard = {"left": {"type": "move", "move": "blizzard"}, "right": partner_protect}
 		calm_mind = {"left": {"type": "move", "move": "calmmind"}, "right": partner_protect}
@@ -365,7 +371,7 @@ class B11HistoricalRegressionTests(unittest.TestCase):
 		state = with_fresh_incineroar(current_team_state("team_5", "team_3", 0, 1))
 		state["self"]["team"][5]["health"] = hp(1, 160)
 		state["self"]["team"][5]["item"] = None
-		state["opponent"]["active"]["right"]["health"] = hp(15, 100)
+		state["opponent"]["active"]["right"]["health"] = public_opponent_hp(15)
 		common_right = {
 			"type": "move", "move": "bodypress", "target": "opponent_right",
 			"transformation": "mega",
