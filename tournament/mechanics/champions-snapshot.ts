@@ -11,14 +11,14 @@ export const SEMANTIC_ANNOTATION_VERSION = 1;
 export interface MechanicsSnapshot {
 	schema_version: number;
 	format: {
-		id: string;
-		name: string;
-		mod: string;
-		gen: number;
-		game_type: string;
+		id: string,
+		name: string,
+		mod: string,
+		gen: number,
+		game_type: string,
 	};
 	source: {
-		showdown_commit: string | null;
+		showdown_commit: string | null,
 	};
 	type_chart: Record<string, Record<string, number>>;
 	species: SpeciesSnapshot[];
