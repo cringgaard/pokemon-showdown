@@ -264,15 +264,40 @@ class MechanicsSnapshot:
 		return multiplier == 0
 
 	def wide_guard_blocks(self, move: str | MoveMechanics) -> bool:
+		"""Resolve move-level Wide Guard eligibility without inventing attacker context."""
 		move_data = self.move(move) if isinstance(move, str) else move
-		return move_data.target in SPREAD_TARGETS and not move_data.breaks_protect
+		if move_data.target not in SPREAD_TARGETS or move_data.breaks_protect or "protect" not in move_data.flags:
+			return False
+		if "contact" in move_data.flags:
+			raise UnresolvedMechanicError(
+				f"{move_data.name} is a contact spread move; attacker effects can alter its protection flags"
+			)
+		return True
 
 	def weather_grants_perfect_accuracy(self, move: str | MoveMechanics, weather: str | None) -> bool:
 		if not weather:
 			return False
 		move_data = self.move(move) if isinstance(move, str) else move
-		weather_values = self.semantic("moves", move_data.id).get("always_hits_in_weather", [])
-		return to_id(weather) in {to_id(str(value)) for value in weather_values}
+		semantics = self.semantic("moves", move_data.id)
+		weather_map = semantics.get("accuracy_by_weather")
+		weather_id = to_id(weather)
+		if weather_map is not None:
+			if not isinstance(weather_map, Mapping):
+				raise ValueError(f"Malformed weather accuracy annotation for {move_data.id}")
+			for annotated_weather, accuracy in weather_map.items():
+				if to_id(str(annotated_weather)) == weather_id:
+					if accuracy is True:
+						return True
+					if isinstance(accuracy, bool) or not isinstance(accuracy, (int, float)):
+						raise ValueError(f"Malformed weather accuracy value for {move_data.id}.{annotated_weather}")
+					return False
+			if semantics.get("weather_accuracy_fully_modeled") is True:
+				return False
+		if "onModifyMove" in move_data.callback_names:
+			raise UnresolvedMechanicError(
+				f"{move_data.name} has callback-driven move changes without a complete B2 weather-accuracy model"
+			)
+		return False
 
 	def ability_bypasses_accuracy(self, ability: str) -> bool:
 		return bool(self.semantic("abilities", ability).get("accuracy_bypass", False))
