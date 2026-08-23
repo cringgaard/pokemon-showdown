@@ -24,6 +24,13 @@ function playerDiagnostics(player) {
 	return JSON.stringify({
 		stats: player.stats,
 		fallback_log: player.fallback_log,
+		retry_errors: player.states.filter(state => state.runtime.previous_error).map(state => ({
+			decision_id: state.runtime.decision_id,
+			attempt: state.runtime.attempt,
+			phase: state.battle.phase,
+			turn: state.battle.turn,
+			previous_error: state.runtime.previous_error,
+		})),
 		stderr: player.stderr,
 	}, null, 2);
 }
