@@ -240,11 +240,10 @@ class B11HistoricalRegressionTests(unittest.TestCase):
 		)
 		self.assertTrue(fake_out_is_fresh(knowledge))
 		cash_out = candidate_with_move(ranking, "left", "blizzard")
+		setup = candidate_with_move(ranking, "left", "calmmind")
+		self.assertGreater(feature_value(cash_out, "OPPONENT_KO"), feature_value(setup, "OPPONENT_KO"))
+		self.assertGreater(cash_out.final_score, setup.final_score)
 		self.assertEqual(ranking.selected_action_id, cash_out.candidate.action_id)
-		self.assertTrue(any(
-			item.rule_id == "CASH_OUT" and item.adjustment > 0
-			for item in cash_out.tactical_adjustments
-		))
 
 	def test_p0_07_freeze_dry_punishes_pelipper_weather_reset_instead_of_failed_veil(self):
 		state = current_team_state("team_1", "team_3", 1, 0)
