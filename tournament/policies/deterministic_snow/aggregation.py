@@ -402,9 +402,6 @@ def _tactical_adjustments(
 	credible_weights = _renormalized_subset_weights(weights, credible)
 	primary_id = _primary_resource_id(strategy)
 
-	# Rescue is defined by the projected event itself, not by an arbitrary B8
-	# feature threshold. This catches both full-health redirection and deliberate
-	# sacrificial Follow Me when the primary route is actually preserved.
 	if primary_id and _candidate_uses_move(candidate, "followme"):
 		probability = _credible_branch_probability(
 			cases, credible, credible_weights,
@@ -447,11 +444,14 @@ def _tactical_adjustments(
 	if _candidate_uses_move(candidate, "auroraveil") and not _own_side_condition_active(knowledge, "auroraveil"):
 		probability = _credible_branch_probability(
 			cases, credible, credible_weights,
-			lambda outcome: "auroraveil" not in {to_id(value) for value in outcome.projected_own_side_conditions},
+			lambda outcome: (
+				"auroraveil" not in {to_id(value) for value in outcome.projected_own_side_conditions} and
+				not _weather_allows_aurora_veil(outcome.projected_weather)
+			),
 		)
 		_add_adjustment(
 			result, "FAILED_WEATHER_DEPENDENT_MOVE", probability, config,
-			"Aurora Veil fails under credible projected weather states",
+			"Aurora Veil fails specifically because credible projected weather is incompatible",
 		)
 
 	if _candidate_uses_move(candidate, "mudslap"):
@@ -465,16 +465,13 @@ def _tactical_adjustments(
 		)
 
 	if _candidate_has_damaging_move(candidate):
-		probability = _credible_case_probability(
+		probability = _credible_branch_probability(
 			cases, credible, credible_weights,
-			lambda case: (
-				case.utility.features_by_id().get("OPPONENT_DAMAGE", 0.0) <= 0.01 and
-				case.utility.features_by_id().get("OPPONENT_KO", 0.0) <= 0.01
-			),
+			_zero_effect_unblocked_damage,
 		)
 		_add_adjustment(
 			result, "ZERO_EFFECT", probability, config,
-			"The candidate's damaging component produces essentially no value in credible responses",
+			"An unblocked damaging action resolves for essentially zero value in a credible branch",
 		)
 
 	aggron_id = _own_id_for_species(strategy, "aggron")
@@ -508,6 +505,22 @@ def _redirects_attack_away_from_primary(outcome: ProjectedOutcome, primary_id: s
 		record.final_target_id != primary_id
 		for record in outcome.action_records
 	)
+
+
+def _weather_allows_aurora_veil(weather: str | None) -> bool:
+	return to_id(weather or "") in {"snow", "snowscape", "hail"}
+
+
+def _zero_effect_unblocked_damage(outcome: ProjectedOutcome) -> bool:
+	if ProjectionUncertainty.UNKNOWN_DYNAMIC_EFFECT in outcome.uncertain_interactions:
+		return False
+	damaging_records = [
+		record for record in outcome.action_records
+		if record.side == "own" and to_id(record.action) in _TEAM_DAMAGING_MOVES
+	]
+	if not damaging_records or all(record.blocked_by is not None for record in damaging_records):
+		return False
+	return not any(change.high_fraction > 0.01 for change in outcome.opponent_hp_changes)
 
 
 def _add_adjustment(
@@ -610,8 +623,6 @@ def _own_side_condition_active(knowledge: KnowledgeState, condition_id: str) -> 
 
 
 def _mud_slap_punishes_into_known_ability(knowledge: KnowledgeState, outcome: ProjectedOutcome) -> bool:
-	# If a same-turn opponent transform branch could change the ability, fail
-	# closed instead of applying a species-script penalty.
 	if ProjectionUncertainty.OPPONENT_TRANSFORMATION in outcome.uncertain_interactions:
 		return False
 	ability_by_id = {item.id: to_id(item.ability or "") for item in knowledge.opponent_roster}
