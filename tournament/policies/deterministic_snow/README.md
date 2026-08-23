@@ -15,9 +15,9 @@ The package intentionally has no `choose_action()` entrypoint yet.
 
 ## Mechanics boundary
 
-Showdown remains the mechanics authority. The snapshot exporter lives in `tournament/mechanics/champions-snapshot.ts`; final bot packaging should generate its JSON from the exact tournament Showdown revision and include the artifact beside the Python policy.
+The executable mechanics in this fork are definitive. Showdown remains the mechanics authority; the snapshot exporter lives in `tournament/mechanics/champions-snapshot.ts`. Final bot packaging should generate its JSON from the exact tournament Showdown revision and include the artifact beside the Python policy.
 
-Python is intentionally limited to static lookups and simple deterministic composition such as multiplying type-chart entries for dual-type targets. Callback-backed mechanics such as Freeze-Dry, No Guard, Wide Guard, Snow Cloak and item effects are exposed through explicit semantic annotations which are regression-tested against the format-aware Showdown source/mechanics.
+Python is intentionally limited to static lookups and simple deterministic composition such as multiplying type-chart entries for dual-type targets. Callback-backed mechanics are exposed only through explicit semantic annotations regression-tested against the format-aware Showdown implementation. If the snapshot does not completely resolve a contextual mechanic, Python raises `UnresolvedMechanicError` rather than silently substituting a generic rule.
 
 All policy JSON output uses stable ordering and finite numbers so identical public inputs reconstruct and serialize identically across worker restarts.
 
