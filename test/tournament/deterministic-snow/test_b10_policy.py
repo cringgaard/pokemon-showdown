@@ -85,6 +85,13 @@ class B10PolicyTests(unittest.TestCase):
 				"right": {"type": "move", "move": "bodypress", "target": "opponent_right", "transformation": "mega"},
 			},
 		])
+		# Isolate the Aggron-fortress route so FOLLOW_ME_RESCUE is expected to be
+		# the primary-win-condition tactical adjustment rather than merely useful
+		# generic redirection.
+		state["self"]["team"][0]["health"] = {
+			"current": 0, "max": 160, "exact": True, "percent": 0,
+		}
+		state["self"]["team"][0]["fainted"] = True
 		state["opponent"]["team"][0]["moves"] = [{"id": "protect", "name": "Protect"}]
 		state["opponent"]["team"][1]["moves"] = [{"id": "closecombat", "name": "Close Combat"}]
 		state["history"][0] = event(0, "showteam", ["p2", packed_sheet(state["opponent"]["team"])])
@@ -119,6 +126,11 @@ class B10PolicyTests(unittest.TestCase):
 			"current": 0, "max": 160, "exact": True, "percent": 0,
 		}
 		state["self"]["team"][0]["fainted"] = True
+		# Remove matchup pressure from this regression: it is specifically about
+		# the public weather-reset term, not Ninetales switching into Fire/Fighting.
+		for index in (0, 1):
+			state["opponent"]["team"][index]["moves"] = [{"id": "protect", "name": "Protect"}]
+		state["history"][0] = event(0, "showteam", ["p2", packed_sheet(state["opponent"]["team"])])
 		state["request"] = {
 			"kind": "forced_switch",
 			"slots": {},
