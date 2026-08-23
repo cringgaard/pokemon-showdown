@@ -13,6 +13,7 @@ from deterministic_snow.responses import (
 	OpponentActionRole,
 	ResponseArchetype,
 	ResponseContractError,
+	default_response_generation_config,
 	generate_opponent_responses,
 )
 from deterministic_snow.strategy import PlanLabel, assess_runtime_strategy
@@ -105,6 +106,13 @@ class B6ResponseGenerationTests(unittest.TestCase):
 		with self.assertRaises(ResponseContractError):
 			generate_opponent_responses(self.knowledge(state), self.mechanics)
 
+	def test_response_config_rejects_missing_named_weight(self):
+		config = default_response_generation_config()
+		weights = dict(config.weights)
+		weights.pop("PRIMARY_TARGET")
+		with self.assertRaisesRegex(ValueError, "response weight IDs invalid"):
+			replace(config, weights=weights).validate()
+
 	def test_actual_ots_moves_only_and_stale_fake_out_is_removed(self):
 		state = b6_state()
 		state["opponent"]["team"][1]["moves"] = [{"id": "closecombat", "name": "Close Combat"}]
@@ -148,6 +156,33 @@ class B6ResponseGenerationTests(unittest.TestCase):
 		focused = [response for response in responses.responses if ResponseArchetype.FOCUS_PRIMARY_WINCON in response.archetypes]
 		self.assertTrue(focused)
 		self.assertTrue(any(sum(action.target_id == "team_0" for action in response.actions) == 2 for response in focused))
+
+	def test_targeted_control_prefers_the_primary_strategic_resource(self):
+		state = b6_state()
+		gengar = state["opponent"]["team"][2]
+		state["opponent"]["active"]["left"] = active("left", gengar)
+		state["history"].append(event(3, "switch", ["p2a: Gengar", "Gengar, L50", "100/100"]))
+		knowledge = self.knowledge(state)
+		strategy = assess_runtime_strategy(knowledge, self.mechanics)
+		strategy = replace(strategy, scores=RuntimeStrategyScores(
+			strategy.scores.glaceon_fortress,
+			strategy.scores.aggron_fortress,
+			strategy.scores.tactical_offense,
+			PlanLabel.AGGRON_FORTRESS.value,
+		))
+		policy = default_config()
+		policy = replace(policy, opponent_response=replace(
+			policy.opponent_response, max_individual_actions_per_pokemon=10,
+		))
+		responses = generate_opponent_responses(
+			knowledge, self.mechanics, strategy=strategy, policy_config=policy,
+		)
+		will_o_wisps = [action for action in responses.actions_for("left") if action.move == "willowisp"]
+		into_glaceon = next(action for action in will_o_wisps if action.target_id == "team_0")
+		into_aggron = next(action for action in will_o_wisps if action.target_id == "team_1")
+		self.assertGreater(into_aggron.plausibility, into_glaceon.plausibility)
+		self.assertIn("targets primary win condition", into_aggron.reasons)
+		self.assertNotIn("targets primary win condition", into_glaceon.reasons)
 
 	def test_switch_hypotheses_capture_ghost_weather_and_lightning_rod_pivots(self):
 		policy = default_config()
