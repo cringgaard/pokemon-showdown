@@ -60,6 +60,8 @@ def verify(snapshot_path: Path) -> None:
 	assert mechanics.semantic("abilities", "Snow Warning")["entry_weather"] == "snowscape"
 	assert mechanics.semantic("items", "Bright Powder")["incoming_accuracy_modifier"] == [3686, 4096]
 	assert mechanics.semantic("items", "Icy Rock")["weather_extension_turns"] == {"hail": 8, "snowscape": 8}
+	assert mechanics.semantic("items", "Chople Berry")["super_effective_type_damage_multiplier"] == {"Fighting": 0.5}
+	assert mechanics.semantic("items", "Colbur Berry")["super_effective_type_damage_multiplier"] == {"Dark": 0.5}
 	assert mechanics.semantic("moves", "Aurora Veil")["requires_weather"] == ["hail", "snowscape"]
 
 	gravity = mechanics.semantic("field", "Gravity")
