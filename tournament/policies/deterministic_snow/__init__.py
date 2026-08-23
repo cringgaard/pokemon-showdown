@@ -44,6 +44,7 @@ from .mechanics import (
 	SpeciesMechanics,
 	UnresolvedMechanicError,
 )
+from .orchestration_config import OrchestrationConfig, default_orchestration_config
 from .policy import (
 	POLICY_VERSION,
 	PolicyContractError,
@@ -173,6 +174,7 @@ __all__ = [
 	"OpponentResponseSet",
 	"OpponentRosterProfile",
 	"OpponentTag",
+	"OrchestrationConfig",
 	"OutcomeFeatureVector",
 	"POLICY_VERSION",
 	"PlanAssessment",
@@ -225,6 +227,7 @@ __all__ = [
 	"default_aggregation_config",
 	"default_config",
 	"default_mechanics_path",
+	"default_orchestration_config",
 	"default_preview_config",
 	"default_projection_config",
 	"default_response_generation_config",
