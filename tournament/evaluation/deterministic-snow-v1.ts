@@ -13,165 +13,171 @@ export const SNOW_MECHANICS_PATH_ENV = 'DETERMINISTIC_SNOW_MECHANICS_PATH';
 export const DEFAULT_NARROW_MARGIN = 20;
 
 export interface SnowEvaluationProfile {
-	id: string;
-	name: string;
-	botPath: string;
-	teamPath: string;
+	id: string,
+	name: string,
+	botPath: string,
+	teamPath: string,
 }
 
 export interface SnowEvaluationOptions {
-	outputDirectory: string;
-	profiles: SnowEvaluationProfile[];
-	gamesPerSide: number;
-	format?: string;
-	decisionTimeoutMs?: number;
-	matchTimeoutMs?: number;
-	maxInvalidAttempts?: number;
-	narrowMargin?: number;
+	outputDirectory: string,
+	profiles: SnowEvaluationProfile[],
+	gamesPerSide: number,
+	format?: string,
+	decisionTimeoutMs?: number,
+	matchTimeoutMs?: number,
+	maxInvalidAttempts?: number,
+	narrowMargin?: number,
 }
 
-interface TraceFeatureContribution {
-	feature_id: string;
-	value: number;
-	weight: number;
-	contribution: number;
+export interface TraceFeatureContribution {
+	feature_id: string,
+	value: number,
+	weight: number,
+	contribution: number,
 }
 
 interface TraceCandidate {
 	action: {
-		action_id: string;
-		payload: Record<string, unknown>;
-	};
-	expected_score: number | null;
-	credible_bad_case_score: number | null;
-	best_case_score: number | null;
-	final_score: number | null;
-	feature_contributions: TraceFeatureContribution[];
-	tactical_adjustments: Array<{ rule_id: string, adjustment: number, reason: string }>;
+		action_id: string,
+		payload: Record<string, unknown>,
+	},
+	expected_score: number | null,
+	credible_bad_case_score: number | null,
+	best_case_score: number | null,
+	final_score: number | null,
+	feature_contributions: TraceFeatureContribution[],
+	tactical_adjustments: { rule_id: string, adjustment: number, reason: string }[],
 }
 
 export interface SnowDecisionTrace {
-	schema_version: number;
-	level: string;
-	decision_id: number;
-	turn: number;
-	versions: Record<string, string>;
+	schema_version: number,
+	level: string,
+	decision_id: number,
+	turn: number,
+	versions: Record<string, string>,
 	strategy: null | {
-		glaceon_fortress: number;
-		aggron_fortress: number;
-		tactical_offense: number;
-		primary_plan: string | null;
-	};
-	major_threats: string[];
-	opponent_responses: Array<{ id: string, weight: number, reasons: string[], actions: string[] }>;
-	candidates: TraceCandidate[];
-	selected_action_id: string | null;
+		glaceon_fortress: number,
+		aggron_fortress: number,
+		tactical_offense: number,
+		primary_plan: string | null,
+	},
+	major_threats: string[],
+	opponent_responses: { id: string, weight: number, reasons: string[], actions: string[] }[],
+	candidates: TraceCandidate[],
+	selected_action_id: string | null,
 	runtime: {
-		latency_ms: number;
-		candidate_count: number;
-		response_count: number;
-		evaluation_count: number;
-	};
+		latency_ms: number,
+		candidate_count: number,
+		response_count: number,
+		evaluation_count: number,
+	},
 }
 
 export interface SnowDecisionSummary {
-	match_id: string;
-	profile_id: string;
-	snow_side: 'p1' | 'p2';
-	decision_id: number;
-	turn: number;
-	phase: string;
-	selected_action_id: string | null;
-	selected_action: Record<string, unknown> | null;
-	selected_score: number | null;
-	score_margin: number | null;
-	top_alternatives: Array<{
-		action_id: string;
-		action: Record<string, unknown>;
-		score: number | null;
-	}>;
-	primary_plan: string | null;
-	strategy_scores: SnowDecisionTrace['strategy'];
-	major_threats: string[];
-	response_count: number;
-	candidate_count: number;
-	evaluation_count: number;
-	latency_ms: number;
-	mechanic_uncertainty: number;
-	rng_dependence: number;
-	fragile_prediction: number;
-	selected_feature_contributions: TraceFeatureContribution[];
-	tactical_adjustments: TraceCandidate['tactical_adjustments'];
+	match_id: string,
+	profile_id: string,
+	snow_side: 'p1' | 'p2',
+	decision_id: number,
+	turn: number,
+	phase: string,
+	selected_action_id: string | null,
+	selected_action: Record<string, unknown> | null,
+	selected_score: number | null,
+	score_margin: number | null,
+	top_alternatives: {
+		action_id: string,
+		action: Record<string, unknown>,
+		score: number | null,
+	}[],
+	primary_plan: string | null,
+	strategy_scores: SnowDecisionTrace['strategy'],
+	major_threats: string[],
+	response_count: number,
+	candidate_count: number,
+	evaluation_count: number,
+	latency_ms: number,
+	mechanic_uncertainty: number,
+	rng_dependence: number,
+	fragile_prediction: number,
+	selected_feature_contributions: TraceFeatureContribution[],
+	tactical_adjustments: TraceCandidate['tactical_adjustments'],
 }
 
 export interface SnowMatchSummary {
-	match_id: string;
-	profile_id: string;
-	profile_name: string;
-	seed: PRNGSeed;
-	snow_side: 'p1' | 'p2';
-	outcome: 'win' | 'loss' | 'tie';
-	turns: number;
-	trace_count: number;
-	decision_count: number;
-	preview_team: unknown[] | null;
-	preview_leads: unknown[] | null;
-	primary_plan_counts: Record<string, number>;
-	mean_score_margin: number | null;
-	minimum_score_margin: number | null;
-	mean_latency_ms: number | null;
-	max_latency_ms: number | null;
-	runtime_stats: MatchResult['players']['p1']['stats'];
-	unavailable_choice_revisions: number;
-	artifact_directory: string;
-	trace_file: string;
+	match_id: string,
+	profile_id: string,
+	profile_name: string,
+	seed: PRNGSeed,
+	snow_side: 'p1' | 'p2',
+	outcome: 'win' | 'loss' | 'tie',
+	turns: number,
+	trace_count: number,
+	decision_count: number,
+	preview_team: unknown[] | null,
+	preview_leads: unknown[] | null,
+	primary_plan_counts: Record<string, number>,
+	mean_score_margin: number | null,
+	minimum_score_margin: number | null,
+	mean_latency_ms: number | null,
+	max_latency_ms: number | null,
+	runtime_stats: MatchResult['players']['p1']['stats'],
+	unavailable_choice_revisions: number,
+	artifact_directory: string,
+	trace_file: string,
+}
+
+interface ProfileSummary {
+	matches: number,
+	wins: number,
+	losses: number,
+	ties: number,
+	win_rate: number | null,
 }
 
 export interface SnowEvaluationReport {
-	schema_version: number;
-	format: string;
-	showdown_commit: string | null;
-	mechanics_snapshot_hash: string;
-	games_per_side: number;
-	match_count: number;
-	wins: number;
-	losses: number;
-	ties: number;
-	win_rate: number | null;
-	average_turns: number | null;
+	schema_version: number,
+	format: string,
+	showdown_commit: string | null,
+	mechanics_snapshot_hash: string,
+	games_per_side: number,
+	match_count: number,
+	wins: number,
+	losses: number,
+	ties: number,
+	win_rate: number | null,
+	average_turns: number | null,
 	trace_coverage: {
-		traces: number;
-		decisions: number;
-		ratio: number | null;
-	};
-	latency_ms: DistributionSummary;
-	score_margin: DistributionSummary;
-	primary_plan_counts: Record<string, number>;
-	selected_feature_contributions: Record<string, { count: number, mean_value: number, mean_contribution: number }>;
-	profiles: Record<string, {
-		matches: number;
-		wins: number;
-		losses: number;
-		ties: number;
-		win_rate: number | null;
-	}>;
-	matches: SnowMatchSummary[];
+		traces: number,
+		decisions: number,
+		ratio: number | null,
+	},
+	latency_ms: DistributionSummary,
+	score_margin: DistributionSummary,
+	primary_plan_counts: Record<string, number>,
+	selected_feature_contributions: Record<string, {
+		count: number,
+		mean_value: number,
+		mean_contribution: number,
+	}>,
+	profiles: Record<string, ProfileSummary>,
+	matches: SnowMatchSummary[],
 }
 
 export interface DistributionSummary {
-	count: number;
-	mean: number | null;
-	p50: number | null;
-	p95: number | null;
-	min: number | null;
-	max: number | null;
+	count: number,
+	mean: number | null,
+	p50: number | null,
+	p95: number | null,
+	min: number | null,
+	max: number | null,
 }
 
 interface ScheduledMatch {
-	id: string;
-	profile: SnowEvaluationProfile;
-	seed: PRNGSeed;
-	snowSide: 'p1' | 'p2';
+	id: string,
+	profile: SnowEvaluationProfile,
+	seed: PRNGSeed,
+	snowSide: 'p1' | 'p2',
 }
 
 export async function runDeterministicSnowV1Evaluation(options: SnowEvaluationOptions): Promise<SnowEvaluationReport> {
@@ -179,8 +185,9 @@ export async function runDeterministicSnowV1Evaluation(options: SnowEvaluationOp
 	const format = options.format || DEFAULT_FORMAT;
 	const output = prepareOutputDirectory(options.outputDirectory);
 	const root = repositoryRoot();
+	const showdownCommit = currentCommit();
 	const mechanicsPath = path.join(output, 'champions-mechanics.json');
-	const mechanics = writeChampionsMechanicsSnapshot(mechanicsPath, format, currentCommit());
+	const mechanics = writeChampionsMechanicsSnapshot(mechanicsPath, format, showdownCommit);
 	const snowTeamPath = path.join(root, 'tournament/fixtures/teams/champions-snow.txt');
 	const snowBotPath = path.join(root, 'tournament/policies/deterministic_snow/participant.py');
 	const snowTeam = fs.readFileSync(snowTeamPath, 'utf8');
@@ -222,27 +229,30 @@ export async function runDeterministicSnowV1Evaluation(options: SnowEvaluationOp
 		const traces = readSnowDecisionTraces(traceFile);
 		if (traces.length !== snowPlayer.stats.decisions) {
 			throw new Error(
-				`${scheduled.id} produced ${traces.length} snow traces for ${snowPlayer.stats.decisions} decisions.`
+				`${scheduled.id} produced ${traces.length} snow traces for ` +
+				`${snowPlayer.stats.decisions} decisions.`
 			);
 		}
-		const states = snowPlayer.states;
 		const summaries = traces.map(trace => summarizeDecision(
-			scheduled.id, scheduled.profile.id, scheduled.snowSide, trace, states
+			scheduled.id, scheduled.profile.id, scheduled.snowSide, trace, snowPlayer.states
 		));
 		decisionSummaries.push(...summaries);
 		matchSummaries.push(summarizeMatch(scheduled, result, traces, summaries, matchDirectory, traceFile));
 	}
 
 	const report = aggregateReport(
-		format, currentCommit(), mechanics.snapshot_hash, options.gamesPerSide, matchSummaries, decisionSummaries
+		format, showdownCommit, mechanics.snapshot_hash, options.gamesPerSide, matchSummaries, decisionSummaries
 	);
 	writeJSON(path.join(output, 'summary.json'), report);
 	writeJSONLines(path.join(output, 'decisions.jsonl'), decisionSummaries);
-	writeJSON(path.join(output, 'review-queue.json'), buildReviewQueue(matchSummaries, decisionSummaries, options.narrowMargin));
+	writeJSON(
+		path.join(output, 'review-queue.json'),
+		buildReviewQueue(matchSummaries, decisionSummaries, options.narrowMargin)
+	);
 	writeJSON(path.join(output, 'metadata.json'), {
 		schema_version: SNOW_EVALUATION_SCHEMA_VERSION,
 		format,
-		showdown_commit: currentCommit(),
+		showdown_commit: showdownCommit,
 		mechanics_snapshot_hash: mechanics.snapshot_hash,
 		games_per_side: options.gamesPerSide,
 		profiles: options.profiles.map(profile => ({ id: profile.id, name: profile.name })),
@@ -367,7 +377,8 @@ function summarizeMatch(
 ): SnowMatchSummary {
 	const snowPlayer = result.players[scheduled.snowSide];
 	const preview = decisions.find(decision => decision.phase === 'team_preview');
-	const previewTeam = preview?.selected_action && Array.isArray(preview.selected_action.team) ? preview.selected_action.team : null;
+	const previewTeam = preview?.selected_action && Array.isArray(preview.selected_action.team) ?
+		preview.selected_action.team : null;
 	const margins = decisions.map(decision => decision.score_margin).filter(isNumber);
 	const latencies = decisions.map(decision => decision.latency_ms).filter(isNumber);
 	return {
@@ -417,9 +428,11 @@ function aggregateReport(
 			featureTotals.set(feature.feature_id, current);
 		}
 	}
-	const profiles: SnowEvaluationReport['profiles'] = {};
+	const profiles: Record<string, ProfileSummary> = {};
 	for (const match of matches) {
-		const current = profiles[match.profile_id] || { matches: 0, wins: 0, losses: 0, ties: 0, win_rate: null };
+		const current = profiles[match.profile_id] || {
+			matches: 0, wins: 0, losses: 0, ties: 0, win_rate: null,
+		};
 		current.matches++;
 		if (match.outcome === 'win') current.wins++;
 		if (match.outcome === 'loss') current.losses++;
@@ -445,11 +458,13 @@ function aggregateReport(
 		latency_ms: distribution(latencyValues),
 		score_margin: distribution(margins),
 		primary_plan_counts: countPlans(decisions),
-		selected_feature_contributions: Object.fromEntries([...featureTotals.entries()].sort().map(([id, total]) => [id, {
-			count: total.count,
-			mean_value: total.value / total.count,
-			mean_contribution: total.contribution / total.count,
-		}])),
+		selected_feature_contributions: Object.fromEntries(
+			[...featureTotals.entries()].sort().map(([id, total]) => [id, {
+				count: total.count,
+				mean_value: total.value / total.count,
+				mean_contribution: total.contribution / total.count,
+			}])
+		),
 		profiles,
 		matches,
 	};
@@ -482,7 +497,8 @@ export function buildReviewQueue(
 		slowest_decisions: slow,
 		large_margin_loss_decisions: decisions.filter(decision => {
 			const match = matchByID.get(decision.match_id);
-			return match?.outcome === 'loss' && decision.score_margin !== null && decision.score_margin >= narrowMargin * 2;
+			return match?.outcome === 'loss' && decision.score_margin !== null &&
+				decision.score_margin >= narrowMargin * 2;
 		}).sort((left, right) => (right.score_margin ?? 0) - (left.score_margin ?? 0)).slice(0, 20),
 	};
 }
@@ -500,7 +516,8 @@ function validateOptions(options: SnowEvaluationOptions) {
 		if (ids.has(profile.id)) throw new Error(`Duplicate snow evaluation profile id: ${profile.id}`);
 		ids.add(profile.id);
 	}
-	if (options.narrowMargin !== undefined && (!Number.isFinite(options.narrowMargin) || options.narrowMargin < 0)) {
+	if (options.narrowMargin !== undefined &&
+		(!Number.isFinite(options.narrowMargin) || options.narrowMargin < 0)) {
 		throw new Error('narrowMargin must be a finite non-negative number.');
 	}
 }
@@ -518,7 +535,8 @@ function prepareOutputDirectory(directory: string) {
 
 function assertHealthySnowRuntime(matchID: string, player: MatchResult['players']['p1']) {
 	const { stats } = player;
-	if (stats.timeouts || stats.invalid_responses || stats.fallbacks || stats.exceptions || player.unavailable_choice_revisions) {
+	if (stats.timeouts || stats.invalid_responses || stats.fallbacks || stats.exceptions ||
+		player.unavailable_choice_revisions) {
 		throw new Error(`${matchID} snow runtime was not clean: ${JSON.stringify({
 			stats,
 			unavailable_choice_revisions: player.unavailable_choice_revisions,
@@ -531,8 +549,8 @@ function assertHealthySnowRuntime(matchID: string, player: MatchResult['players'
 function assertDecisionTrace(value: unknown, label: string): asserts value is SnowDecisionTrace {
 	if (!value || typeof value !== 'object') throw new Error(`${label} must contain a trace object.`);
 	const trace = value as Partial<SnowDecisionTrace>;
-	if (trace.schema_version !== 1 || !Number.isSafeInteger(trace.decision_id) || !Array.isArray(trace.candidates) ||
-		!trace.runtime || typeof trace.runtime.latency_ms !== 'number') {
+	if (trace.schema_version !== 1 || !Number.isSafeInteger(trace.decision_id) ||
+		!Array.isArray(trace.candidates) || !trace.runtime || typeof trace.runtime.latency_ms !== 'number') {
 		throw new Error(`${label} is not a DecisionTrace.schema_version == 1 payload.`);
 	}
 }
@@ -602,7 +620,8 @@ function writeJSON(filepath: string, value: unknown) {
 }
 
 function writeJSONLines(filepath: string, values: unknown[]) {
-	fs.writeFileSync(filepath, values.map(value => JSON.stringify(value)).join('\n') + (values.length ? '\n' : ''), 'utf8');
+	const contents = values.map(value => JSON.stringify(value)).join('\n');
+	fs.writeFileSync(filepath, contents + (values.length ? '\n' : ''), 'utf8');
 }
 
 async function withSnowEnvironment<T>(
