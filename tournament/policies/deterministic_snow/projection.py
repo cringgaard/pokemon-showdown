@@ -882,11 +882,14 @@ def _apply_hp(
 	if conditional_lethal:
 		branch.possible_faints[target.side].add(target.pokemon_id)
 
-	if definite_lethal and _focus_sash_saves(target, mechanics):
-		target.hp_fraction = _sash_fraction(target)
-		target.item = None
+	survival = _full_hp_survival_source(target, mechanics) if definite_lethal else None
+	if survival is not None:
+		kind, source = survival
+		target.hp_fraction = _one_hp_fraction(target)
+		if kind == "item":
+			target.item = None
 		branch.uncertainties.add(ProjectionUncertainty.SURVIVAL)
-		branch.random_effects.append(f"{target.pokemon_id}:Focus Sash survival")
+		branch.random_effects.append(f"{target.pokemon_id}:{source}:full-HP lethal survival")
 		return
 	target.hp_fraction = max(0.0, current - mid)
 	if definite_lethal:
@@ -897,14 +900,24 @@ def _apply_hp(
 		branch.uncertainties.add(ProjectionUncertainty.SURVIVAL)
 
 
-def _focus_sash_saves(target: _PokemonState, mechanics: MechanicsSnapshot) -> bool:
-	if not target.item or target.hp_fraction < 0.999:
-		return False
-	semantics = _safe_semantic(mechanics, "items", target.item)
-	return semantics.get("survive_full_hp_lethal_hit") is True
+def _full_hp_survival_source(
+	target: _PokemonState,
+	mechanics: MechanicsSnapshot,
+) -> tuple[str, str] | None:
+	if target.hp_fraction < 0.999:
+		return None
+	if target.item:
+		semantics = _safe_semantic(mechanics, "items", target.item)
+		if semantics.get("survive_full_hp_lethal_hit") is True:
+			return "item", target.item
+	if target.ability:
+		semantics = _safe_semantic(mechanics, "abilities", target.ability)
+		if semantics.get("survive_full_hp_lethal_hit") is True:
+			return "ability", target.ability
+	return None
 
 
-def _sash_fraction(target: _PokemonState) -> float:
+def _one_hp_fraction(target: _PokemonState) -> float:
 	if target.max_hp and target.max_hp > 0:
 		return min(1.0, 1.0 / target.max_hp)
 	return 0.01
