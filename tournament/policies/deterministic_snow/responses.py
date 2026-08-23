@@ -362,8 +362,9 @@ def _score_move_action(
 	roles: set[OpponentActionRole] = set()
 	tags = set(threat.tags) if threat is not None else set()
 	target_threat = _target_threat(threat, target_id)
+	damaging = _is_damaging_move(move, mechanics)
 
-	if _is_damaging_move(move, mechanics):
+	if damaging:
 		roles.add(OpponentActionRole.DAMAGE)
 		if move.is_spread:
 			roles.add(OpponentActionRole.SPREAD)
@@ -405,6 +406,10 @@ def _score_move_action(
 		roles.add(OpponentActionRole.CONTROL)
 		score += w["CONTROL_VALUE"]
 		reasons.append("control value")
+		if target_id is not None and not damaging:
+			target_bonus, target_reasons = _target_importance(target_id, knowledge, strategy, w)
+			score += target_bonus
+			reasons.extend(target_reasons)
 		if ThreatCategory.SPEED_CONTROL in control_tags:
 			score += w["SPEED_CONTROL_VALUE"]
 			reasons.append("speed control")
@@ -523,6 +528,7 @@ def _retain_diverse_actions(
 	seen_keys: set[str] = set()
 	for role in (
 		OpponentActionRole.DAMAGE,
+		OpponentActionRole.SPREAD,
 		OpponentActionRole.PROTECT,
 		OpponentActionRole.SETUP,
 		OpponentActionRole.CONTROL,
