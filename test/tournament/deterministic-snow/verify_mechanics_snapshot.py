@@ -26,7 +26,10 @@ def verify(snapshot_path: Path) -> None:
 	assert mechanics.species("Aggron-Mega").types == ("Steel",)
 	assert mechanics.semantic("abilities", "Snow Cloak")["incoming_accuracy_modifier_in_weather"]["snow"] == [3277, 4096]
 	assert mechanics.semantic("items", "Bright Powder")["incoming_accuracy_modifier"] == [3686, 4096]
-	assert mechanics.semantic("field", "Gravity")["accuracy_multiplier_ratio"] == [5, 3]
+	gravity = mechanics.semantic("field", "Gravity")
+	assert gravity["accuracy_multiplier_ratio"] == [6840, 4096]
+	assert gravity["grounds_flying"] is True
+	assert "suppresses_evasion" not in gravity
 	assert mechanics.semantic("moves", "Mud-Slap")["target_accuracy_change"] == -1
 
 	try:
