@@ -12,9 +12,11 @@ and exports a deterministic JSON snapshot containing the format/mod identity, ty
 
 ## Boundary
 
-The generated snapshot is static mechanics data, not a serialized `Battle` and not a second simulator. Python may use it for deterministic facts such as type effectiveness, immunity, form typing, move targeting, move metadata, and known semantic properties. Contextual turn resolution remains the responsibility of later projection code and must stay intentionally shallow.
+The executable Showdown implementation in this fork is definitive. The generated snapshot is static mechanics data, not a serialized `Battle` and not a second simulator. Python may use it for deterministic facts such as type effectiveness, immunity, form typing, move targeting, move metadata, and known semantic properties. Contextual turn resolution remains the responsibility of later projection code and must stay intentionally shallow.
 
-Semantic annotations are interpretations of Showdown mechanics. Each annotation must be backed by format-aware Dex/source assertions or simulator regressions. Adding an annotation without a regression is a mechanics-boundary change and should be reviewed accordingly.
+Semantic annotations are interpretations of the executable Showdown mechanics. Each annotation must be backed by format-aware Dex/source assertions or simulator regressions. If a callback-backed mechanic is not completely modeled for the context a Python query asks about, the consumer must fail closed with `UnresolvedMechanicError` rather than inventing a definite result. Adding or changing an annotation without a regression is a mechanics-boundary change and should be reviewed accordingly.
+
+The exporter emits one canonical entry per public mechanics ID. Showdown-internal aliases/placeholders that collapse to the same public ID (for example typed Hidden Power placeholders) must not create duplicate snapshot records.
 
 ## Generation
 
