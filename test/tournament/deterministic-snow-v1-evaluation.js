@@ -20,12 +20,20 @@ function syntheticTrace() {
 		decision_id: 7,
 		turn: 3,
 		versions: { policy: 'p', config: 'c', weights: 'w', mechanics: 'm', team: 't', format: 'f', mod: 'x' },
-		strategy: { glaceon_fortress: 80, aggron_fortress: 40, tactical_offense: 55, primary_plan: 'GLACEON_FORTRESS' },
+		strategy: {
+			glaceon_fortress: 80,
+			aggron_fortress: 40,
+			tactical_offense: 55,
+			primary_plan: 'GLACEON_FORTRESS',
+		},
 		major_threats: ['focus Glaceon'],
 		opponent_responses: [{ id: 'r1', weight: 1, reasons: ['damage'], actions: ['move'] }],
 		candidates: [
 			{
-				action: { action_id: 'selected', payload: { kind: 'turn', actions: { left: { type: 'move', move: 'blizzard' } } } },
+				action: {
+					action_id: 'selected',
+					payload: { kind: 'turn', actions: { left: { type: 'move', move: 'blizzard' } } },
+				},
 				expected_score: 100,
 				credible_bad_case_score: 80,
 				best_case_score: 120,
@@ -38,7 +46,10 @@ function syntheticTrace() {
 				tactical_adjustments: [{ rule_id: 'CASH_OUT', adjustment: 25, reason: 'convert' }],
 			},
 			{
-				action: { action_id: 'other', payload: { kind: 'turn', actions: { left: { type: 'move', move: 'calmmind' } } } },
+				action: {
+					action_id: 'other',
+					payload: { kind: 'turn', actions: { left: { type: 'move', move: 'calmmind' } } },
+				},
 				expected_score: 75,
 				credible_bad_case_score: 70,
 				best_case_score: 85,
@@ -52,7 +63,7 @@ function syntheticTrace() {
 	};
 }
 
-describe('Deterministic snow v1 evaluation', function () {
+describe('Deterministic snow v1 evaluation', () => {
 	it('builds paired reproducible side-balanced schedules', () => {
 		const profile = { id: 'x', name: 'X', botPath: '/x.py', teamPath: '/x.txt' };
 		const schedule = buildSchedule([profile], 2);
@@ -81,11 +92,13 @@ describe('Deterministic snow v1 evaluation', function () {
 			const queue = buildReviewQueue([
 				{
 					match_id: 'm1', profile_id: 'profile', profile_name: 'Profile', seed: '1,2,3,4', snow_side: 'p1',
-					outcome: 'loss', turns: 4, trace_count: 1, decision_count: 1, preview_team: null, preview_leads: null,
-					primary_plan_counts: {}, mean_score_margin: 25, minimum_score_margin: 25,
+					outcome: 'loss', turns: 4, trace_count: 1, decision_count: 1,
+					preview_team: null, preview_leads: null, primary_plan_counts: {},
+					mean_score_margin: 25, minimum_score_margin: 25,
 					mean_latency_ms: 12.5, max_latency_ms: 12.5,
 					runtime_stats: { decisions: 1, timeouts: 0, invalid_responses: 0, fallbacks: 0, exceptions: 0 },
-					unavailable_choice_revisions: 0, artifact_directory: 'matches/m1', trace_file: 'matches/m1/trace.jsonl',
+					unavailable_choice_revisions: 0,
+					artifact_directory: 'matches/m1', trace_file: 'matches/m1/trace.jsonl',
 				},
 			], [decision], 30);
 			assert.equal(queue.losses.length, 1);
@@ -115,7 +128,10 @@ describe('Deterministic snow v1 evaluation', function () {
 			assert(fs.existsSync(path.join(temporaryDirectory, 'summary.json')));
 			assert(fs.existsSync(path.join(temporaryDirectory, 'decisions.jsonl')));
 			assert(fs.existsSync(path.join(temporaryDirectory, 'review-queue.json')));
-			assert(fs.existsSync(path.join(temporaryDirectory, 'matches', report.matches[0].match_id, 'snow-decision-traces.jsonl')));
+			const firstTraceFile = path.join(
+				temporaryDirectory, 'matches', report.matches[0].match_id, 'snow-decision-traces.jsonl'
+			);
+			assert(fs.existsSync(firstTraceFile));
 		} finally {
 			fs.rmSync(temporaryDirectory, { recursive: true, force: true });
 		}
