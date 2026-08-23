@@ -490,12 +490,16 @@ def default_mechanics_path() -> Path:
 
 
 def choose_action(state: Mapping[str, Any]) -> dict[str, Any]:
-	"""Participant entrypoint used by the persistent tournament Python worker."""
+	"""Participant-compatible entrypoint; tracing is opt-in via stderr environment flag."""
 	global _DEFAULT_POLICY
+	trace_enabled = os.environ.get(TRACE_STDERR_ENV) == "1"
 	if _DEFAULT_POLICY is None:
-		_DEFAULT_POLICY = SnowPolicy.from_mechanics_path(default_mechanics_path(), trace_level=TraceLevel.TOP_CANDIDATES)
+		_DEFAULT_POLICY = SnowPolicy.from_mechanics_path(
+			default_mechanics_path(),
+			trace_level=TraceLevel.TOP_CANDIDATES if trace_enabled else TraceLevel.NONE,
+		)
 	decision = _DEFAULT_POLICY.decide(state)
-	if decision.trace is not None and os.environ.get(TRACE_STDERR_ENV) == "1":
+	if trace_enabled and decision.trace is not None:
 		sys.stderr.write(decision.trace.to_json() + "\n")
 		sys.stderr.flush()
 	return decision.response
