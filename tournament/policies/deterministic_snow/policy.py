@@ -38,6 +38,7 @@ from .aggregation import (
 )
 from .config import PolicyConfig, default_config
 from .mechanics import CHAMPIONS_FORMAT, MechanicsSnapshot, to_id
+from .orchestration_config import OrchestrationConfig, default_orchestration_config, pair_synergy_key
 from .preview import PreviewConfig, TeamPreviewAssessment, assess_team_preview, default_preview_config
 from .projection import ProjectionConfig, default_projection_config, project_turn
 from .reconstruction import KnowledgeState, build_knowledge_state
@@ -105,6 +106,7 @@ class SnowPolicy:
 		response_config: ResponseGenerationConfig | None = None,
 		projection_config: ProjectionConfig | None = None,
 		scoring_config: ScoringConfig | None = None,
+		orchestration_config: OrchestrationConfig | None = None,
 		trace_level: TraceLevel = TraceLevel.TOP_CANDIDATES,
 	):
 		self.mechanics = mechanics.require_champions_format()
@@ -113,12 +115,14 @@ class SnowPolicy:
 		self.response_config = response_config or default_response_generation_config()
 		self.projection_config = projection_config or default_projection_config()
 		self.scoring_config = scoring_config or default_scoring_config()
+		self.orchestration_config = orchestration_config or default_orchestration_config()
 		self.trace_level = trace_level
 		self.policy_config.validate()
 		self.preview_config.validate()
 		self.response_config.validate()
 		self.projection_config.validate()
 		self.scoring_config.validate()
+		self.orchestration_config.validate()
 
 	@classmethod
 	def from_mechanics_path(cls, path: str | Path, **kwargs) -> "SnowPolicy":
@@ -215,21 +219,16 @@ class SnowPolicy:
 		return PolicyDecision(_bot_response(selected), selected.action_id, "turn", mode, trace)
 
 	def _policy_config_for_mode(self, mode: RuntimeMode) -> PolicyConfig:
-		base = self.policy_config.opponent_response
 		if mode is RuntimeMode.FULL:
-			individual_cap, joint_cap = base.max_individual_actions_per_pokemon, base.max_joint_responses
-		elif mode is RuntimeMode.MEDIUM:
-			individual_cap, joint_cap = min(base.max_individual_actions_per_pokemon, 3), min(base.max_joint_responses, 4)
-		elif mode is RuntimeMode.LOW:
-			individual_cap, joint_cap = min(base.max_individual_actions_per_pokemon, 2), min(base.max_joint_responses, 3)
-		else:
-			individual_cap, joint_cap = 1, min(base.max_joint_responses, 2)
+			return self.policy_config
+		base = self.policy_config.opponent_response
+		individual_cap, joint_cap = self.orchestration_config.degraded_response_caps[mode.value]
 		return replace(
 			self.policy_config,
 			opponent_response=replace(
 				base,
-				max_individual_actions_per_pokemon=individual_cap,
-				max_joint_responses=joint_cap,
+				max_individual_actions_per_pokemon=min(base.max_individual_actions_per_pokemon, individual_cap),
+				max_joint_responses=min(base.max_joint_responses, joint_cap),
 			),
 		)
 
@@ -257,6 +256,7 @@ class SnowPolicy:
 		own_by_id = {pokemon.id: pokemon for pokemon in knowledge.own_team}
 		resources = {item.pokemon_id: item for item in strategy.resources}
 		scores: list[_ForcedSwitchScore] = []
+		config = self.orchestration_config
 		for action in knowledge.legal_actions:
 			if action.payload.get("kind") != "turn":
 				raise PolicyContractError("forced_switch legal action must be a turn-shaped action")
@@ -274,47 +274,31 @@ class SnowPolicy:
 				switched.append(pokemon_id)
 				resource = resources.get(pokemon_id)
 				if resource is not None:
-					score += 0.20 * resource.value
+					score += config.replacement_resource_value_factor * resource.value
 				score += self._replacement_role_bonus(pokemon.species, strategy)
 				score += self._replacement_matchup_score(pokemon.types, knowledge)
 				if to_id(pokemon.species) == "ninetalesalola":
 					weather = knowledge.field.weather.value
 					if not isinstance(weather, str) or to_id(weather) != "snow":
-						score += 18.0
+						score += config.replacement_weather_reset_bonus
 			if len(switched) > 1:
 				species = {to_id(own_by_id[pokemon_id].species) for pokemon_id in switched}
-				if {"maushold", "aggron"} <= species or {"maushold", "glaceon"} <= species:
-					score += 12.0
-				if {"ninetalesalola", "glaceon"} <= species:
-					score += 15.0
+				for pair in pair_synergy_key(species):
+					score += config.replacement_pair_synergies[pair]
 			scores.append(_ForcedSwitchScore(action, score))
 		return tuple(sorted(scores, key=lambda item: (-item.score, item.action.canonical_key)))
 
 	def _replacement_role_bonus(self, species: str, strategy: RuntimeStrategyAssessment) -> float:
-		identity = to_id(species)
 		primary = strategy.scores.primary_plan
-		if primary == PlanLabel.GLACEON_FORTRESS.value:
-			return {
-				"ninetalesalola": 24.0,
-				"maushold": 18.0,
-				"glaceon": 14.0,
-				"armarouge": 8.0,
-			}.get(identity, 0.0)
-		if primary == PlanLabel.AGGRON_FORTRESS.value:
-			return {
-				"maushold": 24.0,
-				"aggron": 14.0,
-				"armarouge": 10.0,
-			}.get(identity, 0.0)
-		return {
-			"heliolisk": 10.0,
-			"armarouge": 9.0,
-			"ninetalesalola": 8.0,
-		}.get(identity, 0.0)
+		plan = primary if primary in {
+			PlanLabel.GLACEON_FORTRESS.value, PlanLabel.AGGRON_FORTRESS.value,
+		} else "DEFAULT"
+		return float(self.orchestration_config.replacement_role_bonuses[plan].get(to_id(species), 0.0))
 
 	def _replacement_matchup_score(self, defending_types: tuple[str, ...], knowledge: KnowledgeState) -> float:
 		roster = {pokemon.id: pokemon for pokemon in knowledge.opponent_roster}
 		multipliers: list[float] = []
+		config = self.orchestration_config
 		for active in knowledge.opponent_active:
 			identity = active.established_identity.value
 			if not isinstance(identity, str):
@@ -333,12 +317,18 @@ class SnowPolicy:
 					multiplier = self.mechanics.type_multiplier(move.type, defending_types)
 				except (KeyError, ValueError):
 					continue
-				multipliers.append(multiplier * min(1.5, max(0.25, move.base_power / 100.0)))
+				power_factor = move.base_power / config.matchup_move_power_reference
+				power_factor = min(config.matchup_move_power_cap, max(config.matchup_move_power_floor, power_factor))
+				multipliers.append(multiplier * power_factor)
 		if not multipliers:
 			return 0.0
 		worst = max(multipliers)
 		average = sum(multipliers) / len(multipliers)
-		return 14.0 - 10.0 * worst - 4.0 * average
+		return (
+			config.matchup_base_value -
+			config.matchup_worst_multiplier_penalty * worst -
+			config.matchup_average_multiplier_penalty * average
+		)
 
 	def _validate_state(self, state: Mapping[str, Any]) -> None:
 		if not isinstance(state, Mapping):
@@ -359,7 +349,7 @@ class SnowPolicy:
 	def _versions(self) -> TraceVersions:
 		return TraceVersions(
 			POLICY_VERSION,
-			self.policy_config.versions.config,
+			f"{self.policy_config.versions.config}+{self.orchestration_config.version}",
 			self.scoring_config.version,
 			self.mechanics.snapshot_hash,
 			self.policy_config.versions.team,
