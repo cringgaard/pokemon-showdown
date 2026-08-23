@@ -104,7 +104,9 @@ describe('Deterministic snow mechanics integration', () => {
 		assert.equal(dex.moves.get('heatwave').target, 'allAdjacentFoes');
 		assert.equal(dex.moves.get('weatherball').target, 'normal');
 		assert.equal(typeof dex.moves.get('freezedry').onEffectiveness, 'function');
-		assert.equal(typeof dex.moves.get('gravity').condition.onModifyAccuracy, 'function');
+		const gravity = dex.moves.get('gravity').condition;
+		assert.equal(typeof gravity.onModifyAccuracy, 'function');
+		assert.deepEqual(gravity.onModifyAccuracy.call({ chainModify: modifier => modifier }, 100), [6840, 4096]);
 		assert.equal(typeof dex.abilities.get('noguard').onAnyAccuracy, 'function');
 		assert.equal(typeof dex.abilities.get('snowcloak').onModifyAccuracy, 'function');
 		assert.equal(typeof dex.abilities.get('defiant').onAfterEachBoost, 'function');
