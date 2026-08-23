@@ -382,7 +382,8 @@ def _validate_exact_numeric_weights(value: Mapping[str, Any], expected: set[str]
 	missing = expected - set(value)
 	unknown = set(value) - expected
 	if missing or unknown:
-		raise ValueError(f"{label} IDs invalid; missing={sorted(missing)}, unknown={sorted(unknown)}")
+		display = "Feature weight" if label == "weights" else label
+		raise ValueError(f"{display} IDs invalid; missing={sorted(missing)}, unknown={sorted(unknown)}")
 	for key, weight in value.items():
 		_finite_number(weight, f"{label}.{key}")
 
