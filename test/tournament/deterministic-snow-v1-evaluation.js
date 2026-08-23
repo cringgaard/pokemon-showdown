@@ -38,6 +38,9 @@ function syntheticTrace() {
 				credible_bad_case_score: 80,
 				best_case_score: 120,
 				final_score: 95,
+				response_evaluations: [{
+					response_id: 'r1', utility: 91, confidence: 'HIGH', feature_contributions: [],
+				}],
 				feature_contributions: [
 					{ feature_id: 'MECHANIC_UNCERTAINTY', value: 0.2, weight: -35, contribution: -7 },
 					{ feature_id: 'RNG_DEPENDENCE', value: 0.1, weight: -45, contribution: -4.5 },
@@ -54,6 +57,7 @@ function syntheticTrace() {
 				credible_bad_case_score: 70,
 				best_case_score: 85,
 				final_score: 70,
+				response_evaluations: [],
 				feature_contributions: [],
 				tactical_adjustments: [],
 			},
@@ -75,7 +79,7 @@ describe('Deterministic snow v1 evaluation', () => {
 		assert.notEqual(schedule[0].seed, schedule[2].seed);
 	});
 
-	it('parses trace JSONL and exposes semantic review metrics', () => {
+	it('parses trace JSONL and exposes semantic review metrics with provenance', () => {
 		const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'snow-eval-trace-'));
 		const traceFile = path.join(temporaryDirectory, 'trace.jsonl');
 		try {
@@ -89,6 +93,10 @@ describe('Deterministic snow v1 evaluation', () => {
 			assert.equal(decision.rng_dependence, 0.1);
 			assert.equal(decision.fragile_prediction, 0.3);
 			assert.equal(decision.top_alternatives[0].action_id, 'other');
+			assert.equal(decision.trace_level, 'TOP_CANDIDATES');
+			assert.equal(decision.trace_versions.policy, 'p');
+			assert.equal(decision.opponent_responses[0].id, 'r1');
+			assert.equal(decision.selected_response_evaluations[0].utility, 91);
 			const queue = buildReviewQueue([
 				{
 					match_id: 'm1', profile_id: 'profile', profile_name: 'Profile', seed: '1,2,3,4', snow_side: 'p1',
@@ -108,7 +116,7 @@ describe('Deterministic snow v1 evaluation', () => {
 		}
 	});
 
-	it('runs a paired real MatchRunner evaluation with complete snow traces', async function () {
+	it('runs a paired real MatchRunner evaluation with complete full snow traces', async function () {
 		this.timeout(150_000);
 		const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'snow-v1-eval-'));
 		try {
@@ -124,6 +132,7 @@ describe('Deterministic snow v1 evaluation', () => {
 			assert.equal(report.match_count, 2);
 			assert.equal(report.trace_coverage.ratio, 1);
 			assert.equal(report.matches.length, 2);
+			assert(report.showdown_commit);
 			assert(report.matches.every(match => match.runtime_stats.fallbacks === 0));
 			assert(fs.existsSync(path.join(temporaryDirectory, 'summary.json')));
 			assert(fs.existsSync(path.join(temporaryDirectory, 'decisions.jsonl')));
@@ -132,6 +141,13 @@ describe('Deterministic snow v1 evaluation', () => {
 				temporaryDirectory, 'matches', report.matches[0].match_id, 'snow-decision-traces.jsonl'
 			);
 			assert(fs.existsSync(firstTraceFile));
+			const traces = readSnowDecisionTraces(firstTraceFile);
+			assert(traces.length > 0);
+			assert(traces.every(trace => trace.level === 'FULL'));
+			const decisions = fs.readFileSync(path.join(temporaryDirectory, 'decisions.jsonl'), 'utf8')
+				.trim().split('\n').map(line => JSON.parse(line));
+			assert(decisions.every(decision => decision.trace_level === 'FULL'));
+			assert(decisions.every(decision => decision.trace_versions.policy));
 		} finally {
 			fs.rmSync(temporaryDirectory, { recursive: true, force: true });
 		}
