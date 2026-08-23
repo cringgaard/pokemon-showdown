@@ -8,7 +8,7 @@ history, and optional static mechanics are consumed.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, fields, replace
+from dataclasses import dataclass, fields
 import re
 from typing import Any, Mapping
 
@@ -210,8 +210,6 @@ def _is_protection_move(move_id: str, mechanics: MechanicsSnapshot | None) -> bo
 				return True
 		except (KeyError, ValueError):
 			pass
-	# Protect itself is the B3 history primitive; broader protection families are
-	# promoted only when the mechanics snapshot explicitly annotates them.
 	return move_id == "protect"
 
 
@@ -480,7 +478,10 @@ def _timed_conditions(
 		remaining = None
 		certainty = Certainty.UNKNOWN
 		if duration is not None and isinstance(weather_started, int):
-			expected = weather_started + duration - 1
+			# The tracker records lead-entry weather at turn 0, before the first
+			# numbered turn. No residual duration tick occurs for a fictitious turn 0.
+			first_counted_turn = max(1, weather_started)
+			expected = first_counted_turn + duration - 1
 			remaining = max(0, expected - foundation.turn + 1)
 			certainty = Certainty.DERIVED
 		result.append(TimedConditionKnowledge(
