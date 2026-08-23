@@ -1,109 +1,12 @@
 # Deterministic snow policy
 
-This package contains the public-information foundation, static mechanics boundary, temporal knowledge reconstruction, baseline threat model, runtime strategy valuation, OTS-only Team Preview policy, OTS-only opponent response generator, and B7 shallow turn projector for the deterministic Champions snow-team bot. It consumes the semantic `BotState.schema_version == 2` dictionary supplied to participant Python and does not import Pokemon Showdown simulator code.
+This package is the public-information deterministic policy for the Champions snow team. It consumes only `BotState.schema_version == 2`, the harness-supplied legal actions, public battle history/Open Team Sheets, and a generated format-aware mechanics snapshot. It never imports Pokemon Showdown's Python-inaccessible simulator or receives the omniscient battle stream.
 
-The package intentionally has no `choose_action()` entrypoint yet.
+B10 now exposes the participant-facing `choose_action(state)` entrypoint while preserving the phase boundaries developed in B1-B9.
 
-## Modules
+## Dependency graph
 
-- `knowledge.py` contains the immutable B1 public-information foundation. It keeps apparent and established opponent identity separate, carries explicit certainty/provenance, reconstructs conservative selected-four knowledge, and preserves move provenance.
-- `reconstruction.py` is the B3 policy-facing knowledge layer. Its package-level `build_knowledge_state()` deterministically reconstructs Protect chains, switch chronology, move/target history, public damage observations, mechanics-qualified speed-order evidence, weather provenance, current timed-condition records, and Fake Out eligibility. Correctness is rebuilt from the supplied state/history rather than relying on persistent worker memory.
-- `mechanics.py` consumes a hash-verified, format-aware JSON snapshot generated from Showdown's `Dex.forFormat('gen9championsvgc2026regmb')`. It exposes deterministic species/form, move, item, ability, type-effectiveness and narrowly annotated semantic mechanics without simulating a turn.
-- `threats.py` is the B4 mechanics-to-threat boundary. It classifies known opponent moves, produces coarse public-information damage/KO bands for each active slot, preserves uncertainty when exact mechanics or opponent stats are unavailable, and summarizes double-target/status/control risk without assigning strategic importance to our targets.
-- `strategy.py` is downstream from the threat model. It continuously scores `GLACEON_FORTRESS`, `AGGRON_FORTRESS`, and `TACTICAL_OFFENSE`, applies configured interpretation thresholds, and then derives context-sensitive resource values with a configurable nonlinear HP utility curve. Resource values never feed back into the win-condition calculation.
-- `preview.py` is B5. It intentionally supports Open Team Sheets only. It derives opponent roster tags from the actual submitted moves/items/abilities and format-aware mechanics, keeps up to eight diverse opponent lead hypotheses, evaluates every harness-supplied ordered Bring-4 action, and scores preview plan viability, threat coverage, lead robustness, backline quality, specialist/synergy value, and structural holes. It never invents non-OTS moves or generates its own Team Preview candidates.
-- `responses.py` is B6. It intentionally supports OTS turn states only. It derives individual opponent move/target and switch hypotheses from the actual submitted sets, current selected-four knowledge, B3 history, B4 threats and the current strategy/resource picture. It retains a diverse 3–5-ish action set per active Pokemon through the shared configured cap, then preserves up to eight joint responses spanning maximum damage, primary-win-condition focus, Protect-plus-progress, disruption/setup, pivot lines and spread pressure. It does not inspect any one of our candidate actions and does not project turn outcomes.
-- `projection.py` is B7. It consumes exactly one harness-supplied canonical legal turn action and one candidate-independent B6 joint response, then produces one or more coarse `ProjectedOutcome` branches. It resolves only strategically material ordering/effects and exposes uncertainty explicitly; it does not assign utility, rank candidates, or recreate Showdown's full battle engine.
-- `actions.py` canonicalizes only actions already present in `request.legal_actions`. Its versioned SHA-256 IDs cover Team Preview order, slot, action kind, target, and transformation.
-- `config.py` validates strict configuration sections for versions, action-feature weights, B4 strategy/resource weights, interpretation thresholds, opponent responses, runtime degradation, HP utility, and team roles. B4 scalar heuristic values have stable names in configuration rather than being buried in policy logic; action-scoring feature weights remain deliberately untuned zeros.
-- `features.py` owns stable feature IDs and metadata. It never owns weights.
-- `trace.py` defines serializable version, strategy, response, candidate, feature-contribution, rule-adjustment, selection, and runtime records without implementing a scorer.
-
-## B5 OTS scope
-
-The tournament runner explicitly accepts Open Team Sheets before participant Team Preview decisions. B5 therefore treats complete OTS as a v1 contract rather than an optional information source.
-
-`assess_team_preview()` requires:
-
-- `battle.phase == "team_preview"`;
-- six own Pokemon and six OTS-backed opponent roster entries;
-- every known opponent preview move to have `OPEN_TEAM_SHEET` provenance;
-- all 360 harness-supplied ordered Bring-4 legal actions.
-
-If those conditions are not met, B5 raises `PreviewContractError`. Non-OTS move inference, generic species movesets and hidden-team guessing are explicitly out of scope.
-
-Preview uses actual set information. For example, a Sneasler receives the `FAKE_OUT` tag only when Fake Out is on its submitted OTS set. Mega-stone transformations may contribute public transformed form/type/fixed-ability facts through the B2 mechanics snapshot, but preview does not simulate transformation timing.
-
-The initial preview score follows the design's configurable conceptual decomposition: 30% lead robustness, 25% primary-plan viability, 10% secondary-plan viability, 15% threat coverage, 10% backline quality and 10% synergy/specialist value, minus explicit structural penalties. `PreviewConfig` keeps all scalar preview heuristic values named rather than burying unexplained constants in decision logic.
-
-## B6 OTS response scope
-
-`generate_opponent_responses()` requires a normal `turn` state, an explicit public `showteam` event, six OTS-backed opponent roster entries, and established public identities for the currently active opponents. If those conditions are not met, B6 raises `ResponseContractError` rather than guessing a moveset or resolving an Illusion-like identity ambiguity.
-
-Individual move hypotheses are generated only from the submitted OTS moves. A stale Fake Out is excluded using B3 eligibility, and Protect exists only when it is actually on the set. Targeted moves are expanded across plausible current targets; spread/self/field actions stay targetless at this layer. Recent same-move/same-target history can raise plausibility only through the configured modest multipliers and repeated-pattern cap.
-
-Switch hypotheses come only from `CONFIRMED_SELECTED` or `POSSIBLE_SELECTED` bench candidates; `CONFIRMED_NOT_SELECTED` and publicly fainted candidates are excluded. B6 gives explicit semantic value to important public pivots such as Ghost into Body Press, Lightning Rod into Electric pressure, weather resets, Flash Fire, resistance gains and stronger offensive positioning. Unrevealed possible-selected switches retain the existing reduced multiplier instead of being treated as certain bench options.
-
-The B6 scoring constants live in strict `ResponseGenerationConfig` with stable IDs. The shared `PolicyConfig.opponent_response` section still owns the global action/response caps, history multipliers, and selected-four certainty multipliers.
-
-Most importantly, B6 has no candidate-action input. The dependency remains:
-
-```text
-state
-  ↓
-B3 public knowledge
-  ↓
-B4 threats + runtime strategy/resources
-  ↓
-B6 opponent response set
-  ↓
-B7 state + our candidate + one B6 response → projected outcome
-```
-
-This prevents the simulated opponent from seeing the hidden action currently being evaluated.
-
-## B7 shallow projection scope
-
-`project_turn()` requires a normal `turn` KnowledgeState, a candidate whose canonical action ID is present in `request.legal_actions`, and a non-empty B6 `OpponentJointResponse`. It never creates a move, target, switch, or transformation for our side; harness legality remains authoritative.
-
-The projector intentionally resolves only a shallow strategically relevant sequence:
-
-```text
-voluntary switches
-→ entry weather/field effects
-→ transformations
-→ priority and approximate Speed order
-→ Protect / Wide Guard / Follow Me / Ally Switch
-→ primary move effects
-→ coarse damage and KO ranges
-→ deterministic boosts/status/control
-→ weather/field changes
-→ coarse end-of-turn effects
-```
-
-Our declared transformation is exact because it came from a legal candidate. B6 deliberately does not encode the opponent's simultaneous hidden Mega choice, so B7 branches over publicly possible item transformations before move resolution and records `OPPONENT_TRANSFORMATION` uncertainty. Transformation-triggered field abilities are applied after the form change, allowing effects such as a Mega weather setter to alter the field before ordinary moves.
-
-B7 branches only bounded tactically material uncertainty rather than every random battle event. Same-priority Speed overlap, simultaneous entry-weather ordering, opponent transformation choice and survival/accuracy uncertainty can produce explicit branches or uncertainty markers. Random secondary effects such as incidental freeze/paralysis are not expanded into an exponential tree.
-
-Current-team mechanics receive higher fidelity. The projector handles Body Press Defense, Heavy Slam and Grass Knot weight power, Freeze-Dry type semantics through B2, Blizzard snow accuracy, Aurora Veil's weather requirement, delayed Wish slot resolution, Encore, Protect, Wide Guard, Follow Me, Ally Switch, Snow Cloak/Bright Powder accuracy, Friend Guard, Filter, Flash Fire, Dry Skin, typed resist berries, Focus Sash, base Aggron's Sturdy and Mega Aggron sequencing. Full-HP survival is sourced from generated item/ability semantics so Sturdy preserves Aggronite while Focus Sash is consumed. Lightning Rod is treated as redirection plus Electric immunity and its semantic SpA boost.
-
-Public weather naming is normalized at the B7 boundary: Showdown protocol state may expose `snow`, while generated semantic annotations use the move/weather concept `snowscape`. Those values are treated as the same snow condition for accuracy and weather requirements. Gravity's accuracy modifier is likewise read from the generated B2 field semantic rather than duplicated as a policy constant.
-
-Damage remains intentionally coarse. Exact own HP/stats and public mechanics are used where available; hidden opponent Stat Points/HP force neutral public proxies and broad outcomes. Unknown callback-backed damage/effects degrade to `UNKNOWN_DYNAMIC_EFFECT` instead of being treated as zero. The output records HP-change bands, definite/possible faints, position changes, protection/redirection, deterministic boosts/statuses, field/weather state, unresolved randomness and a `HIGH`/`MEDIUM`/`LOW` confidence classification.
-
-B7 does **not** calculate strategic utility. It does not consume feature weights, aggregate across B6 responses, rank legal candidates, or implement `choose_action()`. Those concerns begin in B8/B9.
-
-## Mechanics boundary
-
-The executable mechanics in this fork are definitive. Showdown remains the mechanics authority; the snapshot exporter lives in `tournament/mechanics/champions-snapshot.ts`. Final bot packaging should generate its JSON from the exact tournament Showdown revision and include the artifact beside the Python policy.
-
-Python is intentionally limited to static lookups and simple deterministic composition such as multiplying type-chart entries for dual-type targets. Callback-backed mechanics are exposed only through explicit semantic annotations regression-tested against the format-aware Showdown implementation. If the snapshot does not completely resolve a contextual mechanic, Python raises `UnresolvedMechanicError` rather than silently substituting a generic rule.
-
-B3 follows the same rule for temporal deductions. It records public observations even when their downstream interpretation is uncertain, and only derives mechanics-sensitive facts when the supplied mechanics snapshot supports the deduction.
-
-B4 damage values are explicitly coarse. Champions OTS does not expose opponent Stat Points, so fallback damage estimates use format-aware move/type mechanics, a neutral public base-stat proxy, exact own defensive stats and deliberately broad bounds. Comparable non-critical public damage observations take precedence. These estimates are for threat bands and KO confidence, not a second general-purpose simulator.
-
-The dependency direction remains one-way:
+Normal turns follow one direction only:
 
 ```text
 BotState + generated mechanics
@@ -112,13 +15,101 @@ B3 public knowledge
         ↓
 B4 baseline threats
         ↓
-B4 win-condition viability
+B4 runtime strategy + resource values
         ↓
-B4 strategic resource values
+B6 candidate-independent opponent responses
         ↓
-B6 opponent responses
+B7 candidate × response shallow projection
         ↓
-B7 shallow projected outcomes
+B8 semantic feature vectors + per-response utility
+        ↓
+B9 robust cross-response aggregation + tactical adjustments
+        ↓
+B10 selected harness-legal BotResponse
 ```
 
-B5 Team Preview consumes the same public knowledge/mechanics boundary before a battle state exists. B7 consumes strategy-independent mechanics plus already-generated B6 responses, and must not feed preferred strategy or future B8 utility back into mechanical facts.
+Opponent response generation never receives the candidate action being evaluated. B8's feature vector remains a separate, versioned representation from its hand-tuned scorer, so later learned weights/models can consume the same feature contract.
+
+## Modules
+
+- `knowledge.py` / `reconstruction.py` — public-information foundation and temporal reconstruction: identities/provenance, selected-four state, Protect history, switches, damage evidence, Speed evidence, weather/timed conditions and Fake Out eligibility.
+- `mechanics.py` — immutable consumer for the hash-verified Champions mechanics artifact generated from `Dex.forFormat('gen9championsvgc2026regmb')`.
+- `threats.py` — strategy-independent public move/threat descriptions and intentionally coarse damage/KO bands.
+- `strategy.py` — continuous `GLACEON_FORTRESS`, `AGGRON_FORTRESS` and `TACTICAL_OFFENSE` scores plus nonlinear strategic resource values.
+- `preview.py` — B5 OTS-only Team Preview. It scores every one of the 360 harness-provided ordered Bring-4 actions; it never invents a preview candidate.
+- `responses.py` — B6 OTS-only, candidate-independent opponent move/switch response set.
+- `projection.py` — B7 bounded shallow turn projection with explicit uncertainty branches.
+- `features.py` / `scoring.py` — B8 stable semantic features and swappable per-response scorer.
+- `aggregation.py` — B9 expected/credible-bad-case aggregation, cross-response robustness/fragility, tactical score adjustments and deterministic ranking.
+- `policy.py` — B10 request routing, runtime degradation, full turn orchestration, forced replacement selection, traces and `choose_action(state)`.
+- `orchestration_config.py` — strict versioned B10 response-budget and forced-replacement preference parameters.
+- `participant.py` — worker-loadable participant wrapper; it avoids trace construction unless stderr tracing is explicitly enabled.
+- `actions.py` — stable IDs for actions already supplied by `request.legal_actions`; it never generates legality.
+- `config.py` — named thresholds/strategy/runtime/response parameters shared by earlier policy layers.
+- `trace.py` — structured decision traces for experiments/regressions; traces are not part of `BotResponse`.
+
+## B10 request routing
+
+`SnowPolicy.decide(state)` is the testable policy API. It returns a `PolicyDecision` containing the exact public response, selected canonical action ID, request phase, runtime mode and optional trace. `SnowPolicy.choose_action(state)` and package-level `choose_action(state)` return only the `BotResponse` required by the tournament worker.
+
+Requests are routed by public phase:
+
+```text
+team_preview  → B5 assess_team_preview
+turn          → B3/B4 → one B6 set → every legal candidate through B7/B8 → B9
+forced_switch → deterministic public replacement scorer over legal actions only
+```
+
+Forced replacement is intentionally separate from B6/B7 because Showdown is not asking both sides for a simultaneous ordinary turn. The replacement selector uses current public resource values, primary-plan roles, public OTS attack typing, weather-reset value and simple pair synergy, but it still chooses exclusively from `request.legal_actions`. Its numeric preferences live in the exported `OrchestrationConfig` rather than being hidden in orchestration control flow.
+
+## Runtime modes
+
+`state.runtime.deadline_ms` is the remaining decision budget supplied by the tournament controller. B10 chooses a mode from the existing `PolicyConfig.runtime` thresholds. The degraded response caps are named/versioned in `OrchestrationConfig`:
+
+- `FULL`: normal configured B6 caps (currently up to 4 individual actions per opponent and 8 joint responses).
+- `MEDIUM`: at most 3 individual actions and 4 joint responses.
+- `LOW`: at most 2 individual actions and 3 joint responses.
+- `EMERGENCY`: 1 individual action per opponent and at most 2 joint responses.
+
+All modes remain deterministic and return a harness-legal action. The outer tournament `BotController` still owns the hard process timeout, invalid-response retry and deterministic infrastructure fallback; that fallback is not the intended normal low-time policy.
+
+## B5/B6 OTS scope
+
+The target tournament accepts Open Team Sheets. B5/B6 therefore fail closed rather than guessing hidden movesets. B5 requires all six OTS roster entries and all 360 ordered Bring-4 legal actions. B6 requires a normal `turn`, an explicit `showteam` event, OTS-backed moves/abilities, and established identities for active opponents.
+
+Opponent switches are retained only from publicly possible/confirmed selected bench members. Important semantic pivot motives include Ghost into Body Press, Lightning Rod into Electric pressure, weather reset, Flash Fire, resistance and offensive positioning.
+
+## B7 projection scope
+
+B7 resolves only strategically material ordering/effects: voluntary switches, entry weather/field effects, transformation, priority/approximate Speed, Protect/Wide Guard/Follow Me/Ally Switch, primary effects, coarse damage/KO, deterministic boosts/status/control and coarse end-of-turn effects.
+
+It represents relevant uncertainty explicitly instead of becoming a second Showdown simulator. Current-team mechanics with dedicated coverage include Mega Aggron sequencing, Sturdy/Focus Sash survival, Body Press, Heavy Slam, Grass Knot, Freeze-Dry, Blizzard-in-snow, Aurora Veil weather requirements, Wish, Follow Me, Wide Guard, Ally Switch, Snow Cloak/Bright Powder, Friend Guard, Filter, Flash Fire, Dry Skin, typed resist berries and Lightning Rod.
+
+## B8 feature/training boundary
+
+B8 feature vectors are versioned independently of the scorer. Features are semantic and mostly team-independent (`OPPONENT_DAMAGE`, `DETERMINISTIC_PROTECTION`, `PRIMARY_WINCON_SURVIVAL`, `RNG_DEPENDENCE`, `CONTROL_GAIN`, etc.). Team-specific strategic knowledge enters through resource/plan context rather than features such as `SAVE_AGGRON`.
+
+That separation is deliberate: later experiments can replace the current hand linear weights with learned linear weights, ranking models, boosted models or neural utility models while keeping B3-B7 fixed and using the same legally available inputs.
+
+## B9 aggregation boundary
+
+B9 combines B8 utilities across the shared B6 response distribution. The initial robust score uses expected utility plus a credible bad case, then candidate-level robustness/fragility and strong post-projection tactical adjustments. Rare responses below the credibility threshold still contribute to expectation/variance but cannot become the policy-driving bad case or fire tactical rules.
+
+The tactical layer adjusts scores; it does not bypass projection or generate moves. Current rules include Follow Me rescue, obvious lethal Glaceon conversion, cash-out, failed weather-dependent Veil, stat-drop ability punishment, genuinely zero-effect attacks and base-Aggron danger when Mega is legally available.
+
+## Mechanics artifact and participant packaging
+
+Showdown remains authoritative. Generate the mechanics artifact from the exact tournament checkout after compilation:
+
+```sh
+node dist/tournament/mechanics/champions-snapshot.js \
+  tournament/policies/deterministic_snow/champions-mechanics.json
+```
+
+The Python consumer verifies the embedded SHA-256 hash before accepting it. The snapshot contains format/mod identity, type chart, species/forms, moves/items/abilities and narrowly regression-backed semantic annotations for callback-driven mechanics.
+
+`policy.py` looks for the artifact beside the package by default. `DETERMINISTIC_SNOW_MECHANICS_PATH` can override that location, which is useful for development/tests. The persistent worker imports mechanics once when the first decision is evaluated and reuses the immutable `SnowPolicy`; battle correctness itself is reconstructed from each public state/history rather than hidden mutable policy memory.
+
+Inside this repository, `tournament/policies/deterministic_snow/participant.py` can be passed to the generic Python worker. A standalone submission can use an equivalent root `main.py` wrapper and package the policy plus generated mechanics JSON.
+
+Set `DETERMINISTIC_SNOW_TRACE_STDERR=1` to enable TOP_CANDIDATES trace construction and emit those structured traces to stderr. With the variable unset, the production participant uses `TraceLevel.NONE` so normal decisions do not pay trace-construction cost. Stdout remains reserved for the worker JSONL protocol.

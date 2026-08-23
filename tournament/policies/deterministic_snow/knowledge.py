@@ -413,7 +413,12 @@ def build_knowledge_state(state: Mapping[str, Any]) -> KnowledgeState:
 		for position in ("left", "right") if position in opponent_active_mapping
 	]
 
-	opponent_side, ots_moves = _open_team_sheet_metadata(history_events, roster_values)
+	opponent_side, ots_moves = _open_team_sheet_metadata(
+		history_events,
+		roster_values,
+		self_name=self_state.get("name"),
+		opponent_name=opponent.get("name"),
+	)
 	confirmed = {active["team_id"] for active in active_values if active.get("team_id") is not None}
 	confirmed.update(_confirmed_selected_from_history(history_events, roster_values, opponent_side))
 	selection = selected_four_statuses((item["id"] for item in roster_values), confirmed)
@@ -512,9 +517,15 @@ def _move_observations(events: tuple[PublicHistoryEvent, ...]) -> tuple[MoveObse
 
 
 def _open_team_sheet_metadata(
-	events: tuple[PublicHistoryEvent, ...], roster: list[Mapping[str, Any]]
+	events: tuple[PublicHistoryEvent, ...],
+	roster: list[Mapping[str, Any]],
+	*,
+	self_name: Any = None,
+	opponent_name: Any = None,
 ) -> tuple[str | None, dict[str, set[str]]]:
-	"""Recover immutable OTS move membership and the opponent side from public showteam history."""
+	"""Recover OTS move membership and side without confusing identical teams."""
+	opponent_side = _opponent_side_from_player_events(events, self_name, opponent_name)
+	matches: list[tuple[str, dict[str, set[str]]]] = []
 	for event in events:
 		if event.type != "showteam":
 			continue
@@ -527,11 +538,53 @@ def _open_team_sheet_metadata(
 			continue
 		if any(_normalize_id(species) != _normalize_id(item.get("species")) for (species, _), item in zip(sets, roster)):
 			continue
-		return args[0], {
+		matches.append((args[0], {
 			item["id"]: move_ids
 			for item, (_, move_ids) in zip(roster, sets)
-		}
+		}))
+
+	if opponent_side is not None:
+		for side, moves in matches:
+			if side == opponent_side:
+				return side, moves
+		# Player events still establish which public switch history belongs to the
+		# opponent even if a synthetic/minimized fixture omitted its showteam line.
+		return opponent_side, {}
+
+	matching_sides = {side for side, _ in matches}
+	if len(matching_sides) == 1:
+		wanted = next(iter(matching_sides))
+		return next((side, moves) for side, moves in matches if side == wanted)
+	# Identical public rosters can make both showteam payloads match. Without an
+	# independent side signal, stay conservative instead of assigning the first.
 	return None, {}
+
+
+def _opponent_side_from_player_events(
+	events: tuple[PublicHistoryEvent, ...], self_name: Any, opponent_name: Any
+) -> str | None:
+	players: dict[str, str] = {}
+	for event in events:
+		if event.type != "player":
+			continue
+		args = event.data.get("args", [])
+		if not isinstance(args, list) or len(args) < 2:
+			continue
+		side, name = args[0], args[1]
+		if isinstance(side, str) and side.startswith("p") and isinstance(name, str):
+			players[side] = name
+
+	if isinstance(opponent_name, str) and opponent_name:
+		matches = [side for side, name in players.items() if name == opponent_name]
+		if len(matches) == 1:
+			return matches[0]
+	if isinstance(self_name, str) and self_name:
+		self_matches = [side for side, name in players.items() if name == self_name]
+		if len(self_matches) == 1 and len(players) == 2:
+			others = [side for side in players if side != self_matches[0]]
+			if len(others) == 1:
+				return others[0]
+	return None
 
 
 def _parse_packed_team_summary(packed: str) -> list[tuple[str, set[str]]]:
