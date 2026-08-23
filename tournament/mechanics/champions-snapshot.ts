@@ -161,6 +161,7 @@ const SEMANTICS: SemanticAnnotations = {
 		brightpowder: { incoming_accuracy_modifier: [3686, 4096] },
 		focussash: { survive_full_hp_lethal_hit: true, consumable: true },
 		chopleberry: { super_effective_type_damage_multiplier: { Fighting: 0.5 }, consumable: true },
+		colburberry: { super_effective_type_damage_multiplier: { Dark: 0.5 }, consumable: true },
 		icyrock: { weather_extension_turns: { hail: 8, snowscape: 8 } },
 	},
 	field: {
