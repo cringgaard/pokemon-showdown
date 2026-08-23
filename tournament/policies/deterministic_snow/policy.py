@@ -139,7 +139,7 @@ class SnowPolicy:
 		if phase == "team_preview":
 			assessment = assess_team_preview(knowledge, self.mechanics, config=self.preview_config)
 			selected = assessment.selected.action
-			trace = self._preview_trace(state, assessment, started, mode)
+			trace = self._preview_trace(state, assessment, started)
 			return PolicyDecision(_bot_response(selected), selected.action_id, phase, mode, trace)
 
 		if phase == "forced_switch":
@@ -149,7 +149,7 @@ class SnowPolicy:
 			)
 			ordered = self._rank_forced_switches(knowledge, strategy)
 			selected = ordered[0].action
-			trace = self._forced_switch_trace(state, strategy, threats, ordered, started, mode)
+			trace = self._forced_switch_trace(state, strategy, threats, ordered, started)
 			return PolicyDecision(_bot_response(selected), selected.action_id, phase, mode, trace)
 
 		if phase != "turn":
@@ -195,7 +195,7 @@ class SnowPolicy:
 					response,
 					projection,
 					policy_config=turn_policy_config,
-					config=self.scoring_config,
+					scoring_config=self.scoring_config,
 				)
 				cases.append(CandidateResponseCase(response, projection, utility))
 			candidate_inputs.append(CandidateEvaluationInput(candidate, tuple(cases)))
@@ -211,7 +211,7 @@ class SnowPolicy:
 			item.candidate for item in ranking.candidates
 			if item.candidate.action_id == ranking.selected_action_id
 		)
-		trace = self._turn_trace(state, strategy, threats, response_set, ranking, started, mode)
+		trace = self._turn_trace(state, strategy, threats, response_set, ranking, started)
 		return PolicyDecision(_bot_response(selected), selected.action_id, "turn", mode, trace)
 
 	def _policy_config_for_mode(self, mode: RuntimeMode) -> PolicyConfig:
@@ -372,7 +372,6 @@ class SnowPolicy:
 		state: Mapping[str, Any],
 		assessment: TeamPreviewAssessment,
 		started: float,
-		mode: RuntimeMode,
 	) -> DecisionTrace | None:
 		if self.trace_level is TraceLevel.NONE:
 			return None
@@ -409,14 +408,13 @@ class SnowPolicy:
 		threats: ThreatModel,
 		ordered: tuple[_ForcedSwitchScore, ...],
 		started: float,
-		mode: RuntimeMode,
 	) -> DecisionTrace | None:
 		if self.trace_level is TraceLevel.NONE:
 			return None
 		selected = ordered[0].action.action_id
 		candidates = tuple(
 			CandidateActionTrace(item.action, None, None, None, item.score, (), (), ())
-			for item in self._ranked_for_trace(ordered, selected)
+			for item in self._ranked_for_trace(ordered)
 		)
 		trace = DecisionTrace(
 			1,
@@ -442,7 +440,6 @@ class SnowPolicy:
 		response_set: OpponentResponseSet,
 		ranking: CandidateRanking,
 		started: float,
-		mode: RuntimeMode,
 	) -> DecisionTrace | None:
 		if self.trace_level is TraceLevel.NONE:
 			return None
@@ -484,7 +481,7 @@ class SnowPolicy:
 			return assessment.candidates[:min(5, len(assessment.candidates))]
 		return assessment.candidates[:1]
 
-	def _ranked_for_trace(self, ordered: tuple[_ForcedSwitchScore, ...], selected: str):
+	def _ranked_for_trace(self, ordered: tuple[_ForcedSwitchScore, ...]):
 		if self.trace_level is TraceLevel.FULL:
 			return ordered
 		if self.trace_level is TraceLevel.TOP_CANDIDATES:
