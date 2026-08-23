@@ -12,6 +12,13 @@ const team = fs.readFileSync(path.join(root, 'tournament/fixtures/teams/champion
 const snowBot = path.join(root, 'tournament/policies/deterministic_snow/participant.py');
 const greedyBot = path.join(root, 'tournament/reference-bots/greedy-damage/main.py');
 
+function restoreMechanicsPath(previous) {
+	if (previous === undefined) {
+		delete process.env.DETERMINISTIC_SNOW_MECHANICS_PATH;
+	} else {
+		Reflect.set(process.env, 'DETERMINISTIC_SNOW_MECHANICS_PATH', previous);
+	}
+}
 
 describe('Deterministic snow B10 MatchRunner integration', function () {
 	this.timeout(90_000);
@@ -42,11 +49,7 @@ describe('Deterministic snow B10 MatchRunner integration', function () {
 			assert(result.players.p1.states.some(state => state.battle.phase === 'turn'));
 			assert(result.players.p1.states.every(state => state.schema_version === 2));
 		} finally {
-			if (previousMechanicsPath === undefined) {
-				delete process.env.DETERMINISTIC_SNOW_MECHANICS_PATH;
-			} else {
-				process.env.DETERMINISTIC_SNOW_MECHANICS_PATH = previousMechanicsPath;
-			}
+			restoreMechanicsPath(previousMechanicsPath);
 			fs.rmSync(temporaryDirectory, { recursive: true, force: true });
 		}
 	});
