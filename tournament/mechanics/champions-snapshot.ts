@@ -148,7 +148,7 @@ const SEMANTICS: SemanticAnnotations = {
 		icyrock: { weather_extension_turns: { snow: 8, hail: 8 } },
 	},
 	field: {
-		gravity: { accuracy_multiplier_ratio: [5, 3], suppresses_evasion: true, grounds_flying: true },
+		gravity: { accuracy_multiplier_ratio: [6840, 4096], grounds_flying: true },
 	},
 };
 
