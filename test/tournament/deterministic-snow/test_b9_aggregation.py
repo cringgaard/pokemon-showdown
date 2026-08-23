@@ -4,11 +4,7 @@ import copy
 from dataclasses import replace
 import unittest
 
-from test_b7_projection import (
-	move_response,
-	state_with,
-	switch_response,
-)
+from test_b7_projection import state_with, switch_response
 from test_b7_projection_hardening import HardenedProjectionMechanics
 from test_b8_scoring import response, response_action, strategy_for
 
@@ -21,10 +17,7 @@ from deterministic_snow.aggregation import (
 	rank_candidates,
 )
 from deterministic_snow.projection import project_turn
-from deterministic_snow.responses import (
-	OpponentActionRole,
-	OpponentResponseSet,
-)
+from deterministic_snow.responses import OpponentActionRole, OpponentResponseSet
 from deterministic_snow.scoring import evaluate_response_utility
 from deterministic_snow.strategy import PlanLabel
 
@@ -144,7 +137,7 @@ class B9AggregationTests(unittest.TestCase):
 					"right": {"type": "move", "move": "protect"},
 				},
 				{
-					"left": {"type": "move", "move": "freezedry", "target": "opponent_left"},
+					"left": {"type": "move", "move": "protect"},
 					"right": {"type": "move", "move": "protect"},
 				},
 			],
