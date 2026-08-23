@@ -69,6 +69,12 @@ def b6_state():
 		opponent(5, "Amoonguss", "regenerator", ["ragepowder", "spore", "gigadrain", "protect"]),
 	])
 	state["history"].insert(0, event(0, "showteam", ["p2", packed_sheet(foes)]))
+	# The inherited snapshot is already at battle turn 3. Preserve the public
+	# numbered-turn boundaries so B3 can correctly derive that lead Fake Out is stale.
+	state["history"].extend([
+		event(1, "turn", ["2"]),
+		event(2, "turn", ["3"]),
+	])
 	return state
 
 
@@ -129,7 +135,7 @@ class B6ResponseGenerationTests(unittest.TestCase):
 		# attackers whose submitted moves can genuinely choose Glaceon as a target.
 		gengar = state["opponent"]["team"][2]
 		state["opponent"]["active"]["left"] = active("left", gengar)
-		state["history"].append(event(2, "switch", ["p2a: Gengar", "Gengar, L50", "100/100"]))
+		state["history"].append(event(3, "switch", ["p2a: Gengar", "Gengar, L50", "100/100"]))
 		knowledge = self.knowledge(state)
 		strategy = assess_runtime_strategy(knowledge, self.mechanics)
 		strategy = replace(strategy, scores=RuntimeStrategyScores(
@@ -166,8 +172,8 @@ class B6ResponseGenerationTests(unittest.TestCase):
 	def test_confirmed_not_selected_never_becomes_switch_candidate(self):
 		state = b6_state()
 		state["history"].extend([
-			event(1, "switch", ["p2a: Gengar", "Gengar, L50", "100/100"]),
-			event(1, "switch", ["p2b: Pelipper", "Pelipper, L50", "100/100"]),
+			event(3, "switch", ["p2a: Gengar", "Gengar, L50", "100/100"]),
+			event(3, "switch", ["p2b: Pelipper", "Pelipper, L50", "100/100"]),
 		])
 		knowledge = self.knowledge(state)
 		statuses = {pokemon.id: pokemon.selected_four.value for pokemon in knowledge.opponent_roster}
@@ -188,7 +194,7 @@ class B6ResponseGenerationTests(unittest.TestCase):
 
 		history_state = b6_state()
 		history_state["history"].append(
-			event(2, "move", ["p2b: Sneasler", "Close Combat", "p1a: Glaceon"]),
+			event(3, "move", ["p2b: Sneasler", "Close Combat", "p1a: Glaceon"]),
 		)
 		history = generate_opponent_responses(self.knowledge(history_state), self.mechanics)
 		history_cc = next(action for action in history.actions_for("right") if action.move == "closecombat" and action.target_id == "team_0")
