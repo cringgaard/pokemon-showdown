@@ -3,6 +3,7 @@
 import os
 from pathlib import Path
 import sys
+import traceback
 
 
 POLICY_PARENT = Path(__file__).resolve().parent.parent
@@ -24,13 +25,20 @@ def choose_action(state):
 	"""Return one legal BotResponse; build traces only when stderr tracing is enabled."""
 	global _POLICY
 	trace_enabled = os.environ.get(TRACE_STDERR_ENV) == "1"
-	if _POLICY is None:
-		_POLICY = SnowPolicy.from_mechanics_path(
-			default_mechanics_path(),
-			trace_level=TraceLevel.TOP_CANDIDATES if trace_enabled else TraceLevel.NONE,
-		)
-	decision = _POLICY.decide(state)
-	if trace_enabled and decision.trace is not None:
-		sys.stderr.write(decision.trace.to_json() + "\n")
-		sys.stderr.flush()
-	return decision.response
+	try:
+		if _POLICY is None:
+			_POLICY = SnowPolicy.from_mechanics_path(
+				default_mechanics_path(),
+				trace_level=TraceLevel.TOP_CANDIDATES if trace_enabled else TraceLevel.NONE,
+			)
+		decision = _POLICY.decide(state)
+		if trace_enabled and decision.trace is not None:
+			sys.stderr.write(decision.trace.to_json() + "\n")
+			sys.stderr.flush()
+		return decision.response
+	except BaseException:
+		# The generic JSONL bridge transports the exception to BotController, but
+		# match artifacts otherwise lose its traceback after retries/fallback. Keep
+		# participant failures visible on stderr without affecting successful turns.
+		traceback.print_exc(file=sys.stderr)
+		raise
