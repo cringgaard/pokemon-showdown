@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+from dataclasses import replace
 from types import SimpleNamespace
 import unittest
 
@@ -9,6 +10,7 @@ from test_b6_responses import event, packed_sheet
 from test_b7_projection import state_with
 from test_b7_projection_hardening import HardenedProjectionMechanics
 
+from deterministic_snow import OrchestrationConfig, default_orchestration_config
 from deterministic_snow.policy import PolicyContractError, RuntimeMode, SnowPolicy
 from deterministic_snow.preview import assess_team_preview
 from deterministic_snow.reconstruction import build_knowledge_state
@@ -46,6 +48,16 @@ class B10PolicyTests(unittest.TestCase):
 			"legal_actions": [{"actions": action} for action in actions],
 		}
 		return state
+
+	def test_orchestration_config_is_public_versioned_and_strict(self):
+		config = default_orchestration_config()
+		self.assertIsInstance(config, OrchestrationConfig)
+		self.assertEqual(config.version, "b10-orchestration-v1")
+		config.validate()
+		bad_caps = dict(config.degraded_response_caps)
+		bad_caps.pop("LOW")
+		with self.assertRaisesRegex(ValueError, "MEDIUM/LOW/EMERGENCY"):
+			replace(config, degraded_response_caps=bad_caps).validate()
 
 	def test_normal_turn_returns_exact_harness_legal_action_and_is_deterministic(self):
 		state = self._turn_state([
