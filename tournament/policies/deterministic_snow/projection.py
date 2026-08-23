@@ -189,6 +189,7 @@ class _MoveIntent:
 	move: MoveMechanics
 	target_token: str | None
 	target_position: str | None
+	original_target_id: str | None = None
 
 
 @dataclass
@@ -513,7 +514,7 @@ def _move_intents(
 		move = mechanics.move(action["move"])
 		target = action.get("target")
 		target_position = _own_target_position(position, target)
-		intents.append(_MoveIntent("own", actor.pokemon_id, position, move, target, target_position))
+		intents.append(_MoveIntent("own", actor.pokemon_id, position, move, target, target_position, None))
 	for action in response.actions:
 		if action.kind is not OpponentActionKind.MOVE or not action.move:
 			continue
@@ -522,7 +523,7 @@ def _move_intents(
 			continue
 		move = mechanics.move(action.move)
 		intents.append(_MoveIntent(
-			"opponent", actor.pokemon_id, action.actor_position, move, None, action.target_position,
+			"opponent", actor.pokemon_id, action.actor_position, move, None, action.target_position, action.target_id,
 		))
 	return tuple(intents)
 
@@ -713,6 +714,7 @@ def _resolve_targets(
 	original = branch.positions[target_side].get(intent.target_position) if intent.target_position else None
 	if original is None:
 		return []
+	original_target_id = intent.original_target_id or original.pokemon_id
 
 	# Follow Me / equivalent active move redirection applies to eligible single-target
 	# attacks before ability redirection. B2 can add redirection immunity semantics later.
@@ -721,14 +723,14 @@ def _resolve_targets(
 		if redirect_id:
 			redirect = _find_actor(branch, target_side, redirect_id)
 			if redirect is not None and not redirect.fainted:
-				return [(redirect, original.pokemon_id, redirect.pokemon_id != original.pokemon_id)]
+				return [(redirect, original_target_id, redirect.pokemon_id != original_target_id)]
 		electric = to_id(move.type) == "electric"
 		if electric:
 			for target in branch.positions[target_side].values():
 				ability = _safe_semantic(mechanics, "abilities", target.ability)
 				if ability.get("electric_redirection") is True and not target.fainted:
-					return [(target, original.pokemon_id, target.pokemon_id != original.pokemon_id)]
-	return [(original, original.pokemon_id, False)]
+					return [(target, original_target_id, target.pokemon_id != original_target_id)]
+	return [(original, original_target_id, original.pokemon_id != original_target_id)]
 
 
 def _single_target_redirection_eligible(move: MoveMechanics) -> bool:
@@ -807,7 +809,10 @@ def _apply_target_effects(
 		))
 	if semantics.get("locks_last_move") is True:
 		branch.status_changes.append(ProjectedStatusChange(target.side, target.pokemon_id, "encore", "volatile", move.id))
-	if semantics.get("causes_flinch") is True and not target.fainted:
+	if (
+		semantics.get("causes_flinch") is True or
+		(semantics.get("first_turn_only") is True and move.id == "fakeout")
+	) and not target.fainted:
 		branch.flinched.add(target.pokemon_id)
 		branch.status_changes.append(ProjectedStatusChange(target.side, target.pokemon_id, "flinch", "volatile", move.id))
 
