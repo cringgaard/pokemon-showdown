@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Iterable
 
-from .config import PolicyConfig, TeamRole, default_config
+from .config import DEFAULT_HP_UTILITY_CURVE, PolicyConfig, TeamRole, default_config
 from .knowledge import OwnPokemonKnowledge, SelectedFourStatus
 from .mechanics import MechanicsSnapshot, UnresolvedMechanicError, to_id
 from .reconstruction import KnowledgeState
@@ -24,16 +24,6 @@ class PlanLabel(str, Enum):
 	AGGRON_FORTRESS = "AGGRON_FORTRESS"
 	TACTICAL_OFFENSE = "TACTICAL_OFFENSE"
 	FLEXIBLE = "FLEXIBLE"
-
-
-DEFAULT_HP_UTILITY_CURVE: tuple[tuple[float, float], ...] = (
-	(0.0, 0.0),
-	(0.01, 0.20),
-	(0.25, 0.45),
-	(0.50, 0.70),
-	(0.75, 0.90),
-	(1.00, 1.00),
-)
 
 
 @dataclass(frozen=True)
@@ -86,20 +76,21 @@ def assess_runtime_strategy(
 	*,
 	threats: ThreatModel | None = None,
 	config: PolicyConfig | None = None,
-	hp_curve: tuple[tuple[float, float], ...] = DEFAULT_HP_UTILITY_CURVE,
 ) -> RuntimeStrategyAssessment:
 	"""Recompute the continuous B4 plan vector entirely from public state."""
 	config = config or default_config()
+	config.validate()
 	threats = threats or build_threat_model(knowledge, mechanics)
-	context = _strategy_context(knowledge, mechanics, threats)
+	context = _strategy_context(knowledge, mechanics, threats, config)
+	curve = config.strategy.hp_utility_curve
 	glaceon = _find_own(knowledge, "glaceon")
 	aggron = _find_own(knowledge, "aggron")
 	ninetales = _find_own(knowledge, "ninetalesalola")
 	maushold = _find_own(knowledge, "maushold")
 
-	glaceon_plan = _score_glaceon(knowledge, threats, context, glaceon, ninetales, hp_curve)
-	aggron_plan = _score_aggron(knowledge, threats, context, aggron, maushold, hp_curve)
-	tactical_plan = _score_tactical(knowledge, threats, context, glaceon_plan.score, aggron_plan.score)
+	glaceon_plan = _score_glaceon(knowledge, threats, context, glaceon, ninetales, config, curve)
+	aggron_plan = _score_aggron(knowledge, threats, context, aggron, maushold, config, curve)
+	tactical_plan = _score_tactical(knowledge, threats, context, glaceon_plan.score, aggron_plan.score, config)
 	plans = (glaceon_plan, aggron_plan, tactical_plan)
 	ordered = sorted(plans, key=lambda item: (-item.score, item.plan.value))
 	margin = ordered[0].score - ordered[1].score
@@ -113,7 +104,7 @@ def assess_runtime_strategy(
 	return RuntimeStrategyAssessment(
 		scores,
 		plans,
-		_resource_values(knowledge, config, scores, context, hp_curve),
+		_resource_values(knowledge, config, scores, context, curve),
 		threats,
 	)
 
@@ -125,11 +116,6 @@ def hp_utility(
 	"""Piecewise-linear HP utility; any nonzero HP retains meaningful value."""
 	if not curve or curve[0][0] != 0 or curve[-1][0] != 1:
 		raise ValueError("HP utility curve must span 0..1")
-	if not 0 <= curve[-1][1] <= 1 or not 0 <= curve[0][1] <= 1:
-		raise ValueError("HP utilities must be between zero and one")
-	for point, next_point in zip(curve, curve[1:]):
-		if next_point[0] <= point[0] or not 0 <= next_point[1] <= 1:
-			raise ValueError("HP utility curve fractions must increase and utilities must be 0..1")
 	fraction = max(0.0, min(1.0, float(health_fraction)))
 	for (x0, y0), (x1, y1) in zip(curve, curve[1:]):
 		if fraction <= x1:
@@ -144,56 +130,67 @@ def _score_glaceon(
 	context: _Context,
 	glaceon: OwnPokemonKnowledge | None,
 	ninetales: OwnPokemonKnowledge | None,
-	hp_curve: tuple[tuple[float, float], ...],
+	config: PolicyConfig,
+	curve: tuple[tuple[float, float], ...],
 ) -> PlanAssessment:
 	if glaceon is None or glaceon.fainted:
 		return PlanAssessment(PlanLabel.GLACEON_FORTRESS, 0.0, (), ("Glaceon unavailable",))
+	w = config.strategy.weights
 	positive: list[str] = []
 	negative: list[str] = []
-	score = 35.0
-	hp = hp_utility(glaceon.health.percent / 100.0, hp_curve)
-	score += 25 * hp
+	hp = hp_utility(glaceon.health.percent / 100.0, curve)
+	score = w["GLACEON_BASE"] + w["GLACEON_HP"] * hp
 	positive.append(f"Glaceon HP utility {hp:.2f}")
 	weather = knowledge.field.weather.value
 	if isinstance(weather, str) and to_id(weather) == "snow":
-		score += 12
+		score += w["GLACEON_SNOW"]
 		positive.append("snow active")
 	if _own_condition_active(knowledge, "auroraveil"):
-		score += 10
+		score += w["GLACEON_VEIL"]
 		positive.append("Aurora Veil active")
 	boosts = dict(glaceon.boosts)
-	calm_mind_progress = max(0, min(boosts.get("spa", 0), boosts.get("spd", 0)))
-	if calm_mind_progress:
-		score += min(12.0, calm_mind_progress * 6.0)
-		positive.append(f"Calm Mind-like progress +{calm_mind_progress}")
+	setup = max(0, min(boosts.get("spa", 0), boosts.get("spd", 0)))
+	if setup:
+		score += min(w["GLACEON_SETUP_CAP"], setup * w["GLACEON_SETUP_PER_STAGE"])
+		positive.append(f"Calm Mind-like progress +{setup}")
 	if ninetales is not None and not ninetales.fainted and context.weather_contested:
-		score += 6
+		score += w["GLACEON_WEATHER_RESET"]
 		positive.append("Ninetales preserves weather reset")
 	if context.glaceon_offensive_matchups:
-		score += min(12.0, context.glaceon_offensive_matchups * 6.0)
+		score += min(
+			w["GLACEON_FAVORABLE_MATCHUP_CAP"],
+			context.glaceon_offensive_matchups * w["GLACEON_FAVORABLE_MATCHUP"],
+		)
 		positive.append(f"{context.glaceon_offensive_matchups} favorable Ice matchup(s)")
-	if threats.physical_pressure >= 0.60:
-		score += 4
+	if threats.physical_pressure >= config.thresholds.physical_pressure_preference_fraction:
+		score += w["GLACEON_PHYSICAL_PRESSURE"]
 		positive.append("opponent pressure is primarily physical")
 
 	if context.no_guard_active:
-		score -= 22
+		score -= w["GLACEON_NO_GUARD_PENALTY"]
 		negative.append("active No Guard bypasses evasion plan")
 	if context.gravity_active:
-		score -= 12
+		score -= w["GLACEON_GRAVITY_PENALTY"]
 		negative.append("Gravity substantially increases opposing accuracy")
 	if threats.accuracy_bypass_pressure:
-		score -= min(15.0, 15.0 * threats.accuracy_bypass_pressure)
+		score -= w["GLACEON_ACCURACY_BYPASS_PENALTY"] * threats.accuracy_bypass_pressure
 		negative.append("accuracy/evasion bypass pressure")
 	if context.dangerous_glaceon_pressure:
-		score -= min(20.0, 4.0 * context.dangerous_glaceon_pressure)
+		score -= min(
+			w["GLACEON_DANGEROUS_MOVE_PENALTY_CAP"],
+			w["GLACEON_DANGEROUS_MOVE_PENALTY"] * context.dangerous_glaceon_pressure,
+		)
 		negative.append("Fire/Fighting/Rock/Steel pressure remains")
 	if (not isinstance(weather, str) or to_id(weather) != "snow") and (ninetales is None or ninetales.fainted):
-		score -= 15
+		score -= w["GLACEON_NO_SNOW_PENALTY"]
 		negative.append("snow absent with no Ninetales reset available")
-	_slot_pressure_penalty(knowledge, threats, glaceon, score_parts=(20.0, 10.0), negative=negative)
-	# The helper returns its penalty through the reason list; calculate it deterministically here.
-	score -= _active_pressure_penalty(knowledge, threats, glaceon, 20.0, 10.0)
+	pressure = _active_pressure_kind(knowledge, threats, glaceon, config.thresholds.heavy_pressure_fraction)
+	if pressure == "lethal":
+		score -= w["GLACEON_LETHAL_PRESSURE_PENALTY"]
+		negative.append("credible incoming line can remove Glaceon")
+	elif pressure == "heavy":
+		score -= w["GLACEON_HEAVY_PRESSURE_PENALTY"]
+		negative.append("heavy immediate pressure on Glaceon")
 	return PlanAssessment(PlanLabel.GLACEON_FORTRESS, _clamp_score(score), tuple(positive), tuple(negative))
 
 
@@ -203,50 +200,54 @@ def _score_aggron(
 	context: _Context,
 	aggron: OwnPokemonKnowledge | None,
 	maushold: OwnPokemonKnowledge | None,
-	hp_curve: tuple[tuple[float, float], ...],
+	config: PolicyConfig,
+	curve: tuple[tuple[float, float], ...],
 ) -> PlanAssessment:
 	if aggron is None or aggron.fainted:
 		return PlanAssessment(PlanLabel.AGGRON_FORTRESS, 0.0, (), ("Aggron unavailable",))
+	w = config.strategy.weights
 	positive: list[str] = []
 	negative: list[str] = []
-	score = 35.0
-	hp = hp_utility(aggron.health.percent / 100.0, hp_curve)
-	score += 25 * hp
+	hp = hp_utility(aggron.health.percent / 100.0, curve)
+	score = w["AGGRON_BASE"] + w["AGGRON_HP"] * hp
 	positive.append(f"Aggron HP utility {hp:.2f}")
 	if _is_mega(aggron):
-		score += 15
+		score += w["AGGRON_MEGA"]
 		positive.append("Mega Aggron state established")
 	defense_boost = max(0, dict(aggron.boosts).get("def", 0))
 	if defense_boost:
-		score += min(12.0, defense_boost * 6.0)
+		score += min(w["AGGRON_DEFENSE_CAP"], defense_boost * w["AGGRON_DEFENSE_PER_STAGE"])
 		positive.append(f"Defense boost +{defense_boost}")
 	if threats.physical_pressure:
-		score += 12 * threats.physical_pressure
+		score += w["AGGRON_PHYSICAL_PRESSURE"] * threats.physical_pressure
 		positive.append("physical opponent pressure favors Aggron")
 	if context.body_press_target_quality:
-		score += 12 * context.body_press_target_quality
+		score += w["AGGRON_BODY_PRESS_QUALITY"] * context.body_press_target_quality
 		positive.append("useful Body Press targets remain")
 	if maushold is not None and not maushold.fainted:
-		score += 6
+		score += w["AGGRON_MAUSHOLD_SUPPORT"]
 		positive.append("Maushold support available")
 
 	if to_id(aggron.status or "") == "brn":
-		score -= 22
+		score -= w["AGGRON_BURN_PENALTY"]
 		negative.append("burn damages Body Press endgame quality")
 	if context.ghost_fraction:
-		score -= 18 * context.ghost_fraction
+		score -= w["AGGRON_GHOST_PRESSURE_PENALTY"] * context.ghost_fraction
 		negative.append("Ghost-heavy remaining roster")
 	if threats.special_pressure:
-		score -= 16 * threats.special_pressure
+		score -= w["AGGRON_SPECIAL_PRESSURE_PENALTY"] * threats.special_pressure
 		negative.append("special pressure bypasses physical fortress strength")
-	if aggron.health.percent <= 25:
-		score -= 8
+	if aggron.health.percent / 100.0 <= config.thresholds.low_hp_fraction:
+		score -= w["AGGRON_LOW_HP_PENALTY"]
 		negative.append("Aggron is at low HP")
 	if _active_position(knowledge, aggron.id) is not None and not _is_mega(aggron):
-		penalty = _active_pressure_penalty(knowledge, threats, aggron, 15.0, 7.0)
-		if penalty:
-			score -= penalty
-			negative.append("base Aggron faces dangerous pre-Mega pressure")
+		pressure = _active_pressure_kind(knowledge, threats, aggron, config.thresholds.heavy_pressure_fraction)
+		if pressure == "lethal":
+			score -= w["AGGRON_BASE_LETHAL_PRESSURE_PENALTY"]
+			negative.append("base Aggron faces lethal pre-Mega pressure")
+		elif pressure == "heavy":
+			score -= w["AGGRON_BASE_HEAVY_PRESSURE_PENALTY"]
+			negative.append("base Aggron faces heavy pre-Mega pressure")
 	return PlanAssessment(PlanLabel.AGGRON_FORTRESS, _clamp_score(score), tuple(positive), tuple(negative))
 
 
@@ -256,40 +257,62 @@ def _score_tactical(
 	context: _Context,
 	glaceon_score: float,
 	aggron_score: float,
+	config: PolicyConfig,
 ) -> PlanAssessment:
+	w = config.strategy.weights
 	positive: list[str] = []
 	negative: list[str] = []
-	score = 10.0
-	low_hp = sum(1 for active in knowledge.opponent_active if active.health.percent <= 50 and not active.fainted)
-	critical_hp = sum(1 for active in knowledge.opponent_active if active.health.percent <= 25 and not active.fainted)
-	if low_hp:
-		score += low_hp * 14
-		positive.append(f"{low_hp} active opponent(s) in cleanup range")
-	if critical_hp:
-		score += critical_hp * 6
-		positive.append(f"{critical_hp} active opponent(s) critically low")
+	score = w["TACTICAL_BASE"]
+	cleanup = sum(
+		1 for active in knowledge.opponent_active
+		if not active.fainted and active.health.percent / 100.0 <= config.thresholds.cleanup_hp_fraction
+	)
+	low = sum(
+		1 for active in knowledge.opponent_active
+		if not active.fainted and active.health.percent / 100.0 <= config.thresholds.low_hp_fraction
+	)
+	if cleanup:
+		score += cleanup * w["TACTICAL_CLEANUP_TARGET"]
+		positive.append(f"{cleanup} active opponent(s) in cleanup range")
+	if low:
+		score += low * w["TACTICAL_LOW_TARGET"]
+		positive.append(f"{low} active opponent(s) very low")
 	if context.opponent_fainted:
-		score += min(18.0, context.opponent_fainted * 6.0)
+		score += min(
+			w["TACTICAL_FAINTED_OPPONENT_CAP"],
+			context.opponent_fainted * w["TACTICAL_FAINTED_OPPONENT"],
+		)
 		positive.append("opponent resources already removed")
 	if context.super_effective_pairs:
-		score += min(18.0, context.super_effective_pairs * 6.0)
+		score += min(
+			w["TACTICAL_SUPER_EFFECTIVE_CAP"],
+			context.super_effective_pairs * w["TACTICAL_SUPER_EFFECTIVE_PAIR"],
+		)
 		positive.append("direct super-effective coverage is available")
 	if context.spread_cleanup:
-		score += 15
+		score += w["TACTICAL_SPREAD_CLEANUP"]
 		positive.append("spread cleanup can cash out the position")
 	fortress_best = max(glaceon_score, aggron_score)
-	if fortress_best < 60:
-		score += min(12.0, (60 - fortress_best) * 0.30)
+	if fortress_best < config.thresholds.fortress_weak_score:
+		score += min(
+			w["TACTICAL_WEAK_FORTRESS_CAP"],
+			(config.thresholds.fortress_weak_score - fortress_best) * w["TACTICAL_WEAK_FORTRESS_FACTOR"],
+		)
 		positive.append("fortress plans are currently weak")
 	if any(slot.ko_confidence in (KOConfidence.CERTAIN, KOConfidence.VERY_LIKELY) for slot in threats.slot_threats):
-		score += 6
+		score += w["TACTICAL_IMMEDIATE_PRESSURE"]
 		positive.append("immediate pressure rewards converting the turn")
-	if not knowledge.opponent_active:
+	if not any(not active.fainted for active in knowledge.opponent_active):
 		negative.append("no active opponent pressure to cash out")
 	return PlanAssessment(PlanLabel.TACTICAL_OFFENSE, _clamp_score(score), tuple(positive), tuple(negative))
 
 
-def _strategy_context(knowledge: KnowledgeState, mechanics: MechanicsSnapshot, threats: ThreatModel) -> _Context:
+def _strategy_context(
+	knowledge: KnowledgeState,
+	mechanics: MechanicsSnapshot,
+	threats: ThreatModel,
+	config: PolicyConfig,
+) -> _Context:
 	remaining_roster = [
 		pokemon for pokemon in knowledge.opponent_roster
 		if pokemon.selected_four is not SelectedFourStatus.CONFIRMED_NOT_SELECTED
@@ -320,6 +343,8 @@ def _strategy_context(knowledge: KnowledgeState, mechanics: MechanicsSnapshot, t
 
 	no_guard = False
 	for active in knowledge.opponent_active:
+		if active.fainted:
+			continue
 		ability = active.ability.value
 		if isinstance(ability, str):
 			try:
@@ -333,13 +358,15 @@ def _strategy_context(knowledge: KnowledgeState, mechanics: MechanicsSnapshot, t
 		if to_id(threat.move_type) in ("fire", "fighting", "rock", "steel")
 		and any(target.damage_band not in (DamageBand.NONE, DamageBand.UNKNOWN) for target in threat.targets)
 	)
-	spread_fire = min(1.0, sum(
+	saturation = config.thresholds.pressure_saturation_move_count
+	spread_fire_count = sum(
 		1 for threat in current_threats
-		if threat.spread and to_id(threat.move_type) == "fire" and ThreatCategory.SPREAD_DAMAGE in threat.tags
-	) / 2.0)
-	water_pressure = min(1.0, sum(
-		1 for threat in current_threats if to_id(threat.move_type) == "water"
-	) / 2.0)
+		if (threat.spread or to_id(threat.move_type) == "fire")
+		and (ThreatCategory.SPREAD_DAMAGE in threat.tags or ThreatCategory.SINGLE_TARGET_DAMAGE in threat.tags)
+	)
+	water_count = sum(1 for threat in current_threats if to_id(threat.move_type) == "water")
+	spread_fire = min(1.0, spread_fire_count / saturation)
+	water_pressure = min(1.0, water_count / saturation)
 	weather = knowledge.field.weather.value
 	if isinstance(weather, str) and to_id(weather) == "rain":
 		water_pressure = max(water_pressure, 0.75)
@@ -355,7 +382,7 @@ def _strategy_context(knowledge: KnowledgeState, mechanics: MechanicsSnapshot, t
 		water_pressure,
 		_opponent_fainted_count(knowledge),
 		_own_super_effective_pairs(knowledge, mechanics),
-		_spread_cleanup_available(knowledge, mechanics),
+		_spread_cleanup_available(knowledge, mechanics, config.thresholds.spread_cleanup_hp_fraction),
 	)
 
 
@@ -364,8 +391,9 @@ def _resource_values(
 	config: PolicyConfig,
 	scores: RuntimeStrategyScores,
 	context: _Context,
-	hp_curve: tuple[tuple[float, float], ...],
+	curve: tuple[tuple[float, float], ...],
 ) -> tuple[ResourceValue, ...]:
+	w = config.strategy.weights
 	roles = tuple(config.team_roles)
 	result: list[ResourceValue] = []
 	weather = knowledge.field.weather.value
@@ -375,46 +403,51 @@ def _resource_values(
 		if pokemon.fainted:
 			result.append(ResourceValue(pokemon.id, pokemon.species, base, 0.0, 0.0, 0.0, 0.0, ("fainted",)))
 			continue
-		hp = hp_utility(pokemon.health.percent / 100.0, hp_curve)
+		hp = hp_utility(pokemon.health.percent / 100.0, curve)
 		species = to_id(pokemon.species)
 		reasons: list[str] = []
 		if species == "glaceon":
-			role_multiplier = 0.65 + 0.70 * scores.glaceon_fortress / 100.0
+			role_multiplier = w["GLACEON_ROLE_BASE"] + w["GLACEON_ROLE_PLAN"] * scores.glaceon_fortress / 100.0
 			reasons.append("scales with Glaceon fortress viability")
 		elif species.startswith("aggron"):
-			role_multiplier = 0.65 + 0.70 * scores.aggron_fortress / 100.0
+			role_multiplier = w["AGGRON_ROLE_BASE"] + w["AGGRON_ROLE_PLAN"] * scores.aggron_fortress / 100.0
 			reasons.append("scales with Aggron fortress viability")
 		elif species == "ninetalesalola":
-			role_multiplier = 0.75 + 0.50 * scores.glaceon_fortress / 100.0
+			role_multiplier = w["NINETALES_ROLE_BASE"] + w["NINETALES_ROLE_GLACEON"] * scores.glaceon_fortress / 100.0
 			if context.weather_contested:
-				role_multiplier += 0.15
+				role_multiplier += w["NINETALES_WEATHER_WAR"]
 				reasons.append("weather war keeps reset value high")
 			reasons.append("supports Glaceon fortress")
 		elif species == "maushold":
-			role_multiplier = 0.75 + 0.45 * max(scores.glaceon_fortress, scores.aggron_fortress) / 100.0
+			role_multiplier = w["MAUSHOLD_ROLE_BASE"] + w["MAUSHOLD_ROLE_FORTRESS"] * max(
+				scores.glaceon_fortress, scores.aggron_fortress
+			) / 100.0
 			reasons.append("redirection/Friend Guard supports either fortress")
 		elif species == "armarouge":
-			role_multiplier = 0.75 + 0.25 * max(scores.glaceon_fortress, scores.aggron_fortress) / 100.0
-			role_multiplier += 0.20 * context.spread_fire_relevance
+			role_multiplier = w["ARMAROUGE_ROLE_BASE"] + w["ARMAROUGE_ROLE_FORTRESS"] * max(
+				scores.glaceon_fortress, scores.aggron_fortress
+			) / 100.0
+			role_multiplier += w["ARMAROUGE_SPREAD_PRESSURE"] * context.spread_fire_relevance
 			reasons.append("spread/Fire protection relevance")
 		elif species == "heliolisk":
-			role_multiplier = 0.80 + 0.35 * scores.tactical_offense / 100.0 + 0.15 * context.water_pressure
+			role_multiplier = w["HELIOLISK_ROLE_BASE"] + w["HELIOLISK_TACTICAL"] * scores.tactical_offense / 100.0
+			role_multiplier += w["HELIOLISK_WATER_PRESSURE"] * context.water_pressure
 			reasons.append("tactical offense and anti-Water pressure")
 		else:
 			role_multiplier = 1.0
 		remaining = 1.0
 		if species.startswith("aggron") and to_id(pokemon.status or "") == "brn":
-			remaining *= 0.75
+			remaining *= w["AGGRON_BURN_REMAINING"]
 			reasons.append("burn reduces remaining endgame utility")
 		if species == "glaceon" and (not isinstance(weather, str) or to_id(weather) != "snow"):
 			ninetales = _find_own(knowledge, "ninetalesalola")
 			if ninetales is None or ninetales.fainted:
-				remaining *= 0.85
+				remaining *= w["GLACEON_NO_SNOW_REMAINING"]
 				reasons.append("snow cannot currently be restored by Ninetales")
 		if to_id(pokemon.status or "") in ("slp", "frz"):
-			remaining *= 0.80
+			remaining *= w["MAJOR_STATUS_REMAINING"]
 			reasons.append("major status reduces immediate utility")
-		role_multiplier = max(0.25, min(1.50, role_multiplier))
+		role_multiplier = max(w["RESOURCE_ROLE_MIN"], min(w["RESOURCE_ROLE_MAX"], role_multiplier))
 		result.append(ResourceValue(
 			pokemon.id,
 			pokemon.species,
@@ -462,40 +495,24 @@ def _is_mega(pokemon: OwnPokemonKnowledge) -> bool:
 	return isinstance(value, dict) and value.get("kind") == "mega"
 
 
-def _active_pressure_penalty(
+def _active_pressure_kind(
 	knowledge: KnowledgeState,
 	threats: ThreatModel,
 	pokemon: OwnPokemonKnowledge,
-	lethal_penalty: float,
-	heavy_penalty: float,
-) -> float:
+	heavy_fraction: float,
+) -> str | None:
 	position = _active_position(knowledge, pokemon.id)
 	if position is None:
-		return 0.0
+		return None
 	slot = next((item for item in threats.slot_threats if item.position == position), None)
 	if slot is None or slot.worst_credible_damage is None:
-		return 0.0
+		return None
 	current = pokemon.health.percent / 100.0
 	if slot.worst_credible_damage >= current:
-		return lethal_penalty
-	if slot.worst_credible_damage >= current * 0.60:
-		return heavy_penalty
-	return 0.0
-
-
-def _slot_pressure_penalty(
-	knowledge: KnowledgeState,
-	threats: ThreatModel,
-	pokemon: OwnPokemonKnowledge,
-	*,
-	score_parts: tuple[float, float],
-	negative: list[str],
-) -> None:
-	penalty = _active_pressure_penalty(knowledge, threats, pokemon, *score_parts)
-	if penalty == score_parts[0]:
-		negative.append("credible incoming line can remove Glaceon")
-	elif penalty:
-		negative.append("heavy immediate pressure on Glaceon")
+		return "lethal"
+	if slot.worst_credible_damage >= current * heavy_fraction:
+		return "heavy"
+	return None
 
 
 def _own_favorable_matchups(knowledge: KnowledgeState, mechanics: MechanicsSnapshot, species_id: str) -> int:
@@ -552,9 +569,13 @@ def _is_super_effective(move_id: str, types: list[str], mechanics: MechanicsSnap
 		return False
 
 
-def _spread_cleanup_available(knowledge: KnowledgeState, mechanics: MechanicsSnapshot) -> bool:
+def _spread_cleanup_available(
+	knowledge: KnowledgeState,
+	mechanics: MechanicsSnapshot,
+	hp_fraction: float,
+) -> bool:
 	live_opponents = [active for active in knowledge.opponent_active if not active.fainted]
-	if len(live_opponents) < 2 or any(active.health.percent > 40 for active in live_opponents):
+	if len(live_opponents) < 2 or any(active.health.percent / 100.0 > hp_fraction for active in live_opponents):
 		return False
 	for pokemon in _live_own_actives(knowledge):
 		for move in pokemon.moves:
