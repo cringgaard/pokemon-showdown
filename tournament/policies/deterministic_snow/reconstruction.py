@@ -129,7 +129,7 @@ def build_knowledge_state(
 	history = HistoryKnowledge(events, moves, protects, switches, speed, damage)
 	weather = _weather_history(events)
 	timed = _timed_conditions(foundation, weather, mechanics)
-	fake_out = _fake_out_eligibility(foundation, events, moves)
+	fake_out = _fake_out_eligibility(foundation, events)
 
 	base = {field.name: getattr(foundation, field.name) for field in fields(FoundationKnowledgeState)}
 	base["knowledge_schema_version"] = 2
@@ -534,10 +534,19 @@ def _actor_for_roster_entry(side: str | None, name: str, species: str, entries: 
 	return max(present, key=lambda candidate: entries[candidate][-1])
 
 
+def _turn_boundaries_after(events: tuple[PublicHistoryEvent, ...], event_index: int) -> int:
+	"""Count publicly observed numbered-turn transitions after an entry event.
+
+	StateTracker records a `|turn|N` line before applying it, so lead entries at
+	tracker turn 0 and ordinary switch-ins during turn N both have exactly one
+	turn-boundary event before their first subsequent action opportunity.
+	"""
+	return sum(1 for event in events if event.index > event_index and event.type == "turn")
+
+
 def _fake_out_eligibility(
 	foundation: FoundationKnowledgeState,
 	events: tuple[PublicHistoryEvent, ...],
-	moves: tuple[MoveObservation, ...],
 ) -> tuple[FakeOutEligibility, ...]:
 	side = _opponent_side(events)
 	entries = _entry_event_indices(events)
@@ -569,9 +578,10 @@ def _fake_out_eligibility(
 			))
 			continue
 		entry_index = entries[actor][-1]
-		acted_since_entry = any(move.actor == actor and move.event_index > entry_index for move in moves)
+		turn_boundaries = _turn_boundaries_after(events, entry_index)
+		eligible = turn_boundaries <= 1
 		result.append(FakeOutEligibility(
-			active.position, team_id, True, not acted_since_entry, Certainty.DERIVED,
-			"fresh public entry with no action since" if not acted_since_entry else "Pokemon has acted since its latest entry",
+			active.position, team_id, True, eligible, Certainty.DERIVED,
+			"fresh public entry" if eligible else "Pokemon remained active beyond its first turn out",
 		))
 	return tuple(sorted(result, key=lambda item: item.position))
