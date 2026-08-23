@@ -1,6 +1,6 @@
 # Deterministic snow policy
 
-This package contains the public-information foundation, static mechanics boundary, temporal knowledge reconstruction, baseline threat model, runtime strategy valuation, OTS-only Team Preview policy, and OTS-only opponent response generator for the deterministic Champions snow-team bot. It consumes the semantic `BotState.schema_version == 2` dictionary supplied to participant Python and does not import Pokemon Showdown simulator code.
+This package contains the public-information foundation, static mechanics boundary, temporal knowledge reconstruction, baseline threat model, runtime strategy valuation, OTS-only Team Preview policy, OTS-only opponent response generator, and B7 shallow turn projector for the deterministic Champions snow-team bot. It consumes the semantic `BotState.schema_version == 2` dictionary supplied to participant Python and does not import Pokemon Showdown simulator code.
 
 The package intentionally has no `choose_action()` entrypoint yet.
 
@@ -13,6 +13,7 @@ The package intentionally has no `choose_action()` entrypoint yet.
 - `strategy.py` is downstream from the threat model. It continuously scores `GLACEON_FORTRESS`, `AGGRON_FORTRESS`, and `TACTICAL_OFFENSE`, applies configured interpretation thresholds, and then derives context-sensitive resource values with a configurable nonlinear HP utility curve. Resource values never feed back into the win-condition calculation.
 - `preview.py` is B5. It intentionally supports Open Team Sheets only. It derives opponent roster tags from the actual submitted moves/items/abilities and format-aware mechanics, keeps up to eight diverse opponent lead hypotheses, evaluates every harness-supplied ordered Bring-4 action, and scores preview plan viability, threat coverage, lead robustness, backline quality, specialist/synergy value, and structural holes. It never invents non-OTS moves or generates its own Team Preview candidates.
 - `responses.py` is B6. It intentionally supports OTS turn states only. It derives individual opponent move/target and switch hypotheses from the actual submitted sets, current selected-four knowledge, B3 history, B4 threats and the current strategy/resource picture. It retains a diverse 3–5-ish action set per active Pokemon through the shared configured cap, then preserves up to eight joint responses spanning maximum damage, primary-win-condition focus, Protect-plus-progress, disruption/setup, pivot lines and spread pressure. It does not inspect any one of our candidate actions and does not project turn outcomes.
+- `projection.py` is B7. It consumes exactly one harness-supplied canonical legal turn action and one candidate-independent B6 joint response, then produces one or more coarse `ProjectedOutcome` branches. It resolves only strategically material ordering/effects and exposes uncertainty explicitly; it does not assign utility, rank candidates, or recreate Showdown's full battle engine.
 - `actions.py` canonicalizes only actions already present in `request.legal_actions`. Its versioned SHA-256 IDs cover Team Preview order, slot, action kind, target, and transformation.
 - `config.py` validates strict configuration sections for versions, action-feature weights, B4 strategy/resource weights, interpretation thresholds, opponent responses, runtime degradation, HP utility, and team roles. B4 scalar heuristic values have stable names in configuration rather than being buried in policy logic; action-scoring feature weights remain deliberately untuned zeros.
 - `features.py` owns stable feature IDs and metadata. It never owns weights.
@@ -61,6 +62,37 @@ B7 state + our candidate + one B6 response → projected outcome
 
 This prevents the simulated opponent from seeing the hidden action currently being evaluated.
 
+## B7 shallow projection scope
+
+`project_turn()` requires a normal `turn` KnowledgeState, a candidate whose canonical action ID is present in `request.legal_actions`, and a non-empty B6 `OpponentJointResponse`. It never creates a move, target, switch, or transformation for our side; harness legality remains authoritative.
+
+The projector intentionally resolves only a shallow strategically relevant sequence:
+
+```text
+voluntary switches
+→ entry weather/field effects
+→ transformations
+→ priority and approximate Speed order
+→ Protect / Wide Guard / Follow Me / Ally Switch
+→ primary move effects
+→ coarse damage and KO ranges
+→ deterministic boosts/status/control
+→ weather/field changes
+→ coarse end-of-turn effects
+```
+
+Our declared transformation is exact because it came from a legal candidate. B6 deliberately does not encode the opponent's simultaneous hidden Mega choice, so B7 branches over publicly possible item transformations before move resolution and records `OPPONENT_TRANSFORMATION` uncertainty. Transformation-triggered field abilities are applied after the form change, allowing effects such as a Mega weather setter to alter the field before ordinary moves.
+
+B7 branches only bounded tactically material uncertainty rather than every random battle event. Same-priority Speed overlap, simultaneous entry-weather ordering, opponent transformation choice and survival/accuracy uncertainty can produce explicit branches or uncertainty markers. Random secondary effects such as incidental freeze/paralysis are not expanded into an exponential tree.
+
+Current-team mechanics receive higher fidelity. The projector handles Body Press Defense, Heavy Slam and Grass Knot weight power, Freeze-Dry type semantics through B2, Blizzard snow accuracy, Aurora Veil's weather requirement, delayed Wish slot resolution, Encore, Protect, Wide Guard, Follow Me, Ally Switch, Snow Cloak/Bright Powder accuracy, Friend Guard, Filter, Flash Fire, Dry Skin, typed resist berries, Focus Sash and Mega Aggron sequencing. Lightning Rod is treated as redirection plus Electric immunity and its semantic SpA boost.
+
+Public weather naming is normalized at the B7 boundary: Showdown protocol state may expose `snow`, while generated semantic annotations use the move/weather concept `snowscape`. Those values are treated as the same snow condition for accuracy and weather requirements. Gravity's accuracy modifier is likewise read from the generated B2 field semantic rather than duplicated as a policy constant.
+
+Damage remains intentionally coarse. Exact own HP/stats and public mechanics are used where available; hidden opponent Stat Points/HP force neutral public proxies and broad outcomes. Unknown callback-backed damage/effects degrade to `UNKNOWN_DYNAMIC_EFFECT` instead of being treated as zero. The output records HP-change bands, definite/possible faints, position changes, protection/redirection, deterministic boosts/statuses, field/weather state, unresolved randomness and a `HIGH`/`MEDIUM`/`LOW` confidence classification.
+
+B7 does **not** calculate strategic utility. It does not consume feature weights, aggregate across B6 responses, rank legal candidates, or implement `choose_action()`. Those concerns begin in B8/B9.
+
 ## Mechanics boundary
 
 The executable mechanics in this fork are definitive. Showdown remains the mechanics authority; the snapshot exporter lives in `tournament/mechanics/champions-snapshot.ts`. Final bot packaging should generate its JSON from the exact tournament Showdown revision and include the artifact beside the Python policy.
@@ -85,6 +117,8 @@ B4 win-condition viability
 B4 strategic resource values
         ↓
 B6 opponent responses
+        ↓
+B7 shallow projected outcomes
 ```
 
-B5 Team Preview consumes the same public knowledge/mechanics boundary before a battle state exists. B7 may perform shallow tactical projection, but must continue treating `request.legal_actions` as authoritative and must not feed preferred strategy back into mechanical facts.
+B5 Team Preview consumes the same public knowledge/mechanics boundary before a battle state exists. B7 consumes strategy-independent mechanics plus already-generated B6 responses, and must not feed preferred strategy or future B8 utility back into mechanical facts.
