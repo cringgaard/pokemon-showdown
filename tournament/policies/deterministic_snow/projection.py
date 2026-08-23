@@ -328,15 +328,16 @@ def _opponent_active_state(active, roster, mechanics: MechanicsSnapshot) -> _Pok
 	types = active.types.value
 	if not isinstance(types, list) or not all(isinstance(value, str) for value in types):
 		types = list(species.types)
-	ability = active.ability.value if isinstance(active.ability.value, str) else roster.ability
-	item = active.item.value if isinstance(active.item.value, str) else roster.item
+	ability = active.ability.value if isinstance(active.ability.value, str) else None
+	item = active.item.value if isinstance(active.item.value, str) else None
 	status = active.status.value if isinstance(active.status.value, str) else None
 	return _PokemonState(
 		"opponent", active.position, roster.id, species.name, roster.level or 50, item, ability,
 		tuple(types), {key: float(value + 20) for key, value in species.stats.items()},
 		{key: int(value) for key, value in active.boosts}, status,
 		max(0.0, active.health.percent / 100.0), bool(active.health.exact),
-		float(active.health.maximum) if active.health.maximum > 0 else None, species.weight_kg, bool(active.fainted),
+		float(active.health.maximum) if active.health.exact and active.health.maximum > 0 else None,
+		species.weight_kg, bool(active.fainted),
 	)
 
 
