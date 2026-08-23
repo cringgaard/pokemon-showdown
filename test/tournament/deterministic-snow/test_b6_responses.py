@@ -4,7 +4,7 @@ import copy
 from dataclasses import replace
 import unittest
 
-from test_b4_strategy import FakeMechanics, FakeMove, event, opponent, state_fixture
+from test_b4_strategy import FakeMechanics, FakeMove, active, event, opponent, state_fixture
 
 from deterministic_snow import build_knowledge_state
 from deterministic_snow.config import default_config
@@ -124,7 +124,13 @@ class B6ResponseGenerationTests(unittest.TestCase):
 		self.assertIn(ResponseArchetype.SPREAD_PRESSURE, archetypes)
 
 	def test_double_target_primary_win_condition_is_preserved(self):
-		knowledge = self.knowledge(b6_state())
+		state = b6_state()
+		# Heat Wave is spread and intentionally targetless in B6, so use two OTS
+		# attackers whose submitted moves can genuinely choose Glaceon as a target.
+		gengar = state["opponent"]["team"][2]
+		state["opponent"]["active"]["left"] = active("left", gengar)
+		state["history"].append(event(2, "switch", ["p2a: Gengar", "Gengar, L50", "100/100"]))
+		knowledge = self.knowledge(state)
 		strategy = assess_runtime_strategy(knowledge, self.mechanics)
 		strategy = replace(strategy, scores=RuntimeStrategyScores(
 			strategy.scores.glaceon_fortress,
