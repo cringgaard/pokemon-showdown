@@ -1,0 +1,84 @@
+name: Deterministic Snow v1 Evaluation
+
+on:
+  workflow_dispatch:
+    inputs:
+      games_per_side:
+        description: Seeds per profile and side
+        required: true
+        default: '8'
+      profiles:
+        description: Comma-separated evaluation profile IDs
+        required: true
+        default: 'greedy-mirror,random-mirror'
+      narrow_margin:
+        description: Review-queue narrow decision cutoff
+        required: true
+        default: '20'
+  push:
+    branches:
+      - master
+    paths:
+      - '.github/workflows/deterministic-snow-v1-evaluation.yml'
+      - 'tournament/evaluation/**'
+      - 'tournament/policies/deterministic_snow/**'
+      - 'tournament/fixtures/teams/champions-snow.txt'
+      - 'tournament/reference-bots/**'
+
+permissions:
+  contents: read
+
+jobs:
+  evaluate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      EVAL_GAMES_PER_SIDE: ${{ github.event_name == 'workflow_dispatch' && inputs.games_per_side || '6' }}
+      EVAL_PROFILES: ${{ github.event_name == 'workflow_dispatch' && inputs.profiles || 'greedy-mirror,random-mirror' }}
+      EVAL_NARROW_MARGIN: ${{ github.event_name == 'workflow_dispatch' && inputs.narrow_margin || '20' }}
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 18.x
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build repository
+        run: npm run build
+
+      - name: Run evaluation batch
+        run: |
+          node dist/tournament/evaluation/deterministic-snow-v1-cli.js \
+            --output snow-v1-evaluation \
+            --games-per-side "$EVAL_GAMES_PER_SIDE" \
+            --profiles "$EVAL_PROFILES" \
+            --decision-timeout-ms 5000 \
+            --match-timeout-ms 60000 \
+            --narrow-margin "$EVAL_NARROW_MARGIN"
+
+      - name: Publish summary
+        if: always() && hashFiles('snow-v1-evaluation/summary.json') != ''
+        run: |
+          {
+            echo '## Deterministic Snow v1 evaluation'
+            echo
+            echo '```json'
+            cat snow-v1-evaluation/summary.json
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload evaluation artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: deterministic-snow-v1-${{ github.sha }}
+          path: snow-v1-evaluation/
+          if-no-files-found: warn
+          retention-days: 30
