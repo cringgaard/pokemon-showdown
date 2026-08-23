@@ -1,15 +1,12 @@
 """B9 robust cross-response aggregation and tactical ranking.
 
 B9 consumes already-computed B6/B7/B8 artifacts. It never regenerates opponent
-responses, projects turns, or extracts per-response features. Its job is to:
+responses, projects turns, or extracts per-response features. It aggregates one
+candidate's utilities across the shared B6 response distribution, exposes the
+cross-response features reserved by B8, applies post-projection tactical score
+adjustments, and ranks the supplied legal candidates deterministically.
 
-1. aggregate one candidate's B8 utilities across the candidate-independent B6
-   response distribution;
-2. expose the two cross-response feature IDs reserved by B8;
-3. apply strong post-projection tactical adjustments; and
-4. rank the provided harness-legal candidate actions deterministically.
-
-The participant-facing ``choose_action`` orchestration remains B10.
+Participant-facing orchestration remains B10.
 """
 
 from __future__ import annotations
@@ -53,7 +50,6 @@ _TEAM_DAMAGING_MOVES = frozenset({
 	"blizzard", "freezedry", "mudslap", "bodypress", "heavyslam",
 	"armorcannon", "psychic", "thunderbolt", "grassknot",
 })
-_SETUP_MOVES = frozenset({"calmmind", "irondefense"})
 _ABILITY_PUNISHMENT_IDS = frozenset({"defiant", "competitive", "contrary"})
 
 
@@ -230,6 +226,7 @@ def _validate_ranking_contract(
 		raise AggregationContractError("B9 candidate action IDs must be unique")
 	if legal_ids and any(action_id not in legal_ids for action_id in candidate_ids):
 		raise AggregationContractError("B9 candidates must come from request.legal_actions")
+
 	for item in candidates:
 		if item.candidate.payload.get("kind") != "turn":
 			raise AggregationContractError("B9 requires canonical turn actions")
@@ -260,32 +257,28 @@ def _aggregate_candidate(
 ) -> CandidateAggregateEvaluation:
 	candidate = candidate_input.candidate
 	case_by_key = {case.response.canonical_key: case for case in candidate_input.cases}
-	ordered_cases = tuple(case_by_key[response.canonical_key] for response in response_set.responses)
+	cases = tuple(case_by_key[response.canonical_key] for response in response_set.responses)
 	weights = _normalized_response_weights(response_set.responses)
-	utilities = tuple(case.utility.utility for case in ordered_cases)
+	utilities = tuple(case.utility.utility for case in cases)
 	if any(not _finite(value) for value in utilities):
 		raise AggregationContractError("B8 response utilities must be finite")
 
 	expected = sum(weight * utility for weight, utility in zip(weights, utilities))
-	credible_indices = _credible_indices(weights, policy_config.thresholds.credible_response_relative_weight)
-	bad_index = min(credible_indices, key=lambda index: (utilities[index], ordered_cases[index].response.canonical_key))
+	credible = _credible_indices(weights, policy_config.thresholds.credible_response_relative_weight)
+	bad_index = min(credible, key=lambda index: (utilities[index], cases[index].response.canonical_key))
 	bad_case = utilities[bad_index]
 	best_case = max(utilities)
-	variance = sum(weight * (utility - expected) ** 2 for weight, utility in zip(weights, utilities))
-	variance = max(0.0, variance)
+	variance = max(0.0, sum(
+		weight * (utility - expected) ** 2
+		for weight, utility in zip(weights, utilities)
+	))
 	stddev = math.sqrt(variance)
 	fragility = _clamp01(stddev / config.utility_spread_scale)
-	credible_values = [utilities[index] for index in credible_indices]
-	credible_range = max(credible_values) - min(credible_values)
-	robustness = _clamp01(1.0 - credible_range / config.utility_spread_scale)
+	credible_values = [utilities[index] for index in credible]
+	robustness = _clamp01(1.0 - (max(credible_values) - min(credible_values)) / config.utility_spread_scale)
 
 	feature_contributions = _aggregate_feature_contributions(
-		ordered_cases,
-		weights,
-		bad_index,
-		robustness,
-		fragility,
-		config,
+		cases, weights, bad_index, robustness, fragility, config,
 	)
 	base_score = sum(item.contribution for item in feature_contributions)
 	expected_formula = (
@@ -297,44 +290,36 @@ def _aggregate_candidate(
 	if not math.isclose(base_score, expected_formula, rel_tol=1e-9, abs_tol=1e-7):
 		raise AggregationContractError("B9 feature contributions do not reproduce the aggregate score")
 
-	credible_ids = tuple(ordered_cases[index].response.canonical_key for index in credible_indices)
 	adjustments = _tactical_adjustments(
-		knowledge,
-		strategy,
-		candidate,
-		ordered_cases,
-		weights,
-		credible_indices,
-		config,
+		knowledge, strategy, candidate, cases, weights, credible, config,
 	)
 	final_score = base_score + sum(item.adjustment for item in adjustments)
 	if not _finite(final_score):
 		raise AggregationContractError("B9 final candidate score must be finite")
 
-	response_traces = tuple(
-		ResponseEvaluationTrace(
-			case.response.canonical_key,
-			case.utility.utility,
-			case.utility.confidence,
-			case.utility.feature_contributions,
-		)
-		for case in ordered_cases
-	)
 	return CandidateAggregateEvaluation(
-		candidate,
-		expected,
-		bad_case,
-		best_case,
-		variance,
-		stddev,
-		robustness,
-		fragility,
-		base_score,
-		feature_contributions,
-		adjustments,
-		final_score,
-		credible_ids,
-		response_traces,
+		candidate=candidate,
+		expected_utility=expected,
+		credible_bad_case_utility=bad_case,
+		best_case_utility=best_case,
+		variance=variance,
+		standard_deviation=stddev,
+		robust_across_responses=robustness,
+		fragile_prediction=fragility,
+		base_score=base_score,
+		feature_contributions=feature_contributions,
+		tactical_adjustments=adjustments,
+		final_score=final_score,
+		credible_response_ids=tuple(cases[index].response.canonical_key for index in credible),
+		response_evaluations=tuple(
+			ResponseEvaluationTrace(
+				case.response.canonical_key,
+				case.utility.utility,
+				case.utility.confidence,
+				case.utility.feature_contributions,
+			)
+			for case in cases
+		),
 	)
 
 
@@ -348,8 +333,7 @@ def _normalized_response_weights(responses: tuple[OpponentJointResponse, ...]) -
 def _credible_indices(weights: tuple[float, ...], relative_threshold: float) -> tuple[int, ...]:
 	if not weights:
 		raise AggregationContractError("cannot choose credible responses from an empty distribution")
-	maximum = max(weights)
-	threshold = maximum * relative_threshold
+	threshold = max(weights) * relative_threshold
 	indices = tuple(index for index, weight in enumerate(weights) if weight >= threshold - 1e-12)
 	return indices or (max(range(len(weights)), key=lambda index: weights[index]),)
 
@@ -362,8 +346,6 @@ def _aggregate_feature_contributions(
 	fragility: float,
 	config: AggregationConfig,
 ) -> tuple[FeatureContribution, ...]:
-	if not cases:
-		return ()
 	by_case = [
 		{item.feature_id: item for item in case.utility.feature_contributions}
 		for case in cases
@@ -389,7 +371,8 @@ def _aggregate_feature_contributions(
 		)
 		blended_contribution = (
 			config.expected_utility_weight * sum(
-				response_weight * item.contribution for response_weight, item in zip(weights, entries)
+				response_weight * item.contribution
+				for response_weight, item in zip(weights, entries)
 			) +
 			config.credible_bad_case_weight * entries[bad_index].contribution
 		)
@@ -412,75 +395,87 @@ def _tactical_adjustments(
 	candidate: CanonicalLegalAction,
 	cases: tuple[CandidateResponseCase, ...],
 	weights: tuple[float, ...],
-	credible_indices: tuple[int, ...],
+	credible: tuple[int, ...],
 	config: AggregationConfig,
 ) -> tuple[TacticalRuleAdjustment, ...]:
 	result: list[TacticalRuleAdjustment] = []
-	credible_weights = _renormalized_subset_weights(weights, credible_indices)
+	credible_weights = _renormalized_subset_weights(weights, credible)
 	primary_id = _primary_resource_id(strategy)
 
-	if _candidate_uses_move(candidate, "followme"):
-		probability = _credible_case_probability(
-			cases, credible_indices, credible_weights,
-			lambda case: (
-				case.utility.features_by_id().get("DETERMINISTIC_PROTECTION", 0.0) >= 0.50 and
-				case.utility.features_by_id().get("PRIMARY_WINCON_SURVIVAL", 0.0) >= 0.50
-			),
+	# Rescue is defined by the projected event itself, not by an arbitrary B8
+	# feature threshold. This catches both full-health redirection and deliberate
+	# sacrificial Follow Me when the primary route is actually preserved.
+	if primary_id and _candidate_uses_move(candidate, "followme"):
+		probability = _credible_branch_probability(
+			cases, credible, credible_weights,
+			lambda outcome: _redirects_attack_away_from_primary(outcome, primary_id),
 		)
-		_add_adjustment(result, "FOLLOW_ME_RESCUE", probability, config,
-			"Follow Me materially preserves the current primary route against credible responses")
+		_add_adjustment(
+			result, "FOLLOW_ME_RESCUE", probability, config,
+			"Follow Me redirects credible pressure away from the surviving primary win condition",
+		)
 
 	glaceon_id = _own_id_for_species(strategy, "glaceon")
 	if glaceon_id and _pokemon_uses_damaging_move(candidate, knowledge, glaceon_id):
 		probability = _credible_case_probability(
-			cases, credible_indices, credible_weights,
+			cases, credible, credible_weights,
 			lambda case: (
 				case.utility.features_by_id().get("OPPONENT_KO", 0.0) >= 0.55 and
 				case.utility.features_by_id().get("PRIMARY_WINCON_SURVIVAL", 0.0) >= 0.45
 			),
 		)
-		_add_adjustment(result, "OBVIOUS_LETHAL_GLACEON", probability, config,
-			"Glaceon converts credible lines into a KO while remaining strategically viable")
+		_add_adjustment(
+			result, "OBVIOUS_LETHAL_GLACEON", probability, config,
+			"Glaceon converts credible lines into a KO while remaining strategically viable",
+		)
 
 	if primary_id and _current_setup_stage(knowledge, strategy, primary_id) > 0 and _pokemon_uses_damaging_move(
 		candidate, knowledge, primary_id,
 	):
 		probability = _credible_case_probability(
-			cases, credible_indices, credible_weights,
+			cases, credible, credible_weights,
 			lambda case: (
 				case.utility.features_by_id().get("FREE_TURN_CONVERSION", 0.0) >= 0.35 and
 				case.utility.features_by_id().get("PRIMARY_WINCON_SURVIVAL", 0.0) >= 0.40
 			),
 		)
-		_add_adjustment(result, "CASH_OUT", probability, config,
-			"An already-developed primary win condition converts the turn into concrete progress")
+		_add_adjustment(
+			result, "CASH_OUT", probability, config,
+			"An already-developed primary win condition converts the turn into concrete progress",
+		)
 
 	if _candidate_uses_move(candidate, "auroraveil") and not _own_side_condition_active(knowledge, "auroraveil"):
 		probability = _credible_branch_probability(
-			cases, credible_indices, credible_weights,
+			cases, credible, credible_weights,
 			lambda outcome: "auroraveil" not in {to_id(value) for value in outcome.projected_own_side_conditions},
 		)
-		_add_adjustment(result, "FAILED_WEATHER_DEPENDENT_MOVE", probability, config,
-			"Aurora Veil fails under credible projected weather states")
+		_add_adjustment(
+			result, "FAILED_WEATHER_DEPENDENT_MOVE", probability, config,
+			"Aurora Veil fails under credible projected weather states",
+		)
 
 	if _candidate_uses_move(candidate, "mudslap"):
 		probability = _credible_branch_probability(
-			cases, credible_indices, credible_weights,
+			cases, credible, credible_weights,
 			lambda outcome: _mud_slap_punishes_into_known_ability(knowledge, outcome),
 		)
-		_add_adjustment(result, "ABILITY_PUNISHMENT", probability, config,
-			"Mud-Slap feeds a publicly known stat-drop-punishing ability in a credible branch")
+		_add_adjustment(
+			result, "ABILITY_PUNISHMENT", probability, config,
+			"Mud-Slap feeds a publicly known stat-drop-punishing ability in a credible branch",
+		)
 
 	if _candidate_has_damaging_move(candidate):
 		probability = _credible_case_probability(
-			cases, credible_indices, credible_weights,
+			cases, credible, credible_weights,
 			lambda case: (
 				case.utility.features_by_id().get("OPPONENT_DAMAGE", 0.0) <= 0.01 and
 				case.utility.features_by_id().get("OPPONENT_KO", 0.0) <= 0.01
 			),
 		)
-		_add_adjustment(result, "ZERO_EFFECT", probability, config,
-			"The candidate's damaging component produces essentially no value in credible responses")
+		_add_adjustment(
+			result, "ZERO_EFFECT", probability, config,
+			"The candidate's damaging component produces essentially no value in credible responses",
+		)
 
 	aggron_id = _own_id_for_species(strategy, "aggron")
 	if (
@@ -491,13 +486,28 @@ def _tactical_adjustments(
 		not _candidate_transforms_pokemon(candidate, knowledge, aggron_id)
 	):
 		probability = _credible_branch_probability(
-			cases, credible_indices, credible_weights,
+			cases, credible, credible_weights,
 			lambda outcome: aggron_id in outcome.own_faints or aggron_id in outcome.possible_own_faints,
 		)
-		_add_adjustment(result, "BASE_AGGRON_DANGER", probability, config,
-			"Base Aggron remains exposed to a credible KO line despite a legal Mega option")
+		_add_adjustment(
+			result, "BASE_AGGRON_DANGER", probability, config,
+			"Base Aggron remains exposed to a credible KO line despite a legal Mega option",
+		)
 
 	return tuple(result)
+
+
+def _redirects_attack_away_from_primary(outcome: ProjectedOutcome, primary_id: str) -> bool:
+	if primary_id in outcome.own_faints or primary_id in outcome.possible_own_faints:
+		return False
+	return any(
+		record.side == "opponent" and
+		record.redirected and
+		record.original_target_id == primary_id and
+		record.final_target_id is not None and
+		record.final_target_id != primary_id
+		for record in outcome.action_records
+	)
 
 
 def _add_adjustment(
@@ -510,9 +520,8 @@ def _add_adjustment(
 	if probability <= 1e-9:
 		return
 	adjustment = float(config.tactical_rule_weights[rule_id]) * _clamp01(probability)
-	if abs(adjustment) <= 1e-9:
-		return
-	result.append(TacticalRuleAdjustment(rule_id, adjustment, reason))
+	if abs(adjustment) > 1e-9:
+		result.append(TacticalRuleAdjustment(rule_id, adjustment, reason))
 
 
 def _renormalized_subset_weights(weights: tuple[float, ...], indices: tuple[int, ...]) -> tuple[float, ...]:
@@ -522,24 +531,14 @@ def _renormalized_subset_weights(weights: tuple[float, ...], indices: tuple[int,
 	return tuple(weights[index] / total for index in indices)
 
 
-def _credible_case_probability(
-	cases: tuple[CandidateResponseCase, ...],
-	indices: tuple[int, ...],
-	subset_weights: tuple[float, ...],
-	predicate,
-) -> float:
+def _credible_case_probability(cases, indices, subset_weights, predicate) -> float:
 	return sum(
 		weight for index, weight in zip(indices, subset_weights)
 		if predicate(cases[index])
 	)
 
 
-def _credible_branch_probability(
-	cases: tuple[CandidateResponseCase, ...],
-	indices: tuple[int, ...],
-	subset_weights: tuple[float, ...],
-	predicate,
-) -> float:
+def _credible_branch_probability(cases, indices, subset_weights, predicate) -> float:
 	result = 0.0
 	for index, response_weight in zip(indices, subset_weights):
 		outcomes = cases[index].projection.outcomes
@@ -570,11 +569,7 @@ def _candidate_has_damaging_move(candidate: CanonicalLegalAction) -> bool:
 	)
 
 
-def _pokemon_uses_damaging_move(
-	candidate: CanonicalLegalAction,
-	knowledge: KnowledgeState,
-	pokemon_id: str,
-) -> bool:
+def _pokemon_uses_damaging_move(candidate: CanonicalLegalAction, knowledge: KnowledgeState, pokemon_id: str) -> bool:
 	position = next((position for position, active_id in knowledge.own_active if active_id == pokemon_id), None)
 	if position is None:
 		return False
@@ -615,6 +610,8 @@ def _own_side_condition_active(knowledge: KnowledgeState, condition_id: str) -> 
 
 
 def _mud_slap_punishes_into_known_ability(knowledge: KnowledgeState, outcome: ProjectedOutcome) -> bool:
+	# If a same-turn opponent transform branch could change the ability, fail
+	# closed instead of applying a species-script penalty.
 	if ProjectionUncertainty.OPPONENT_TRANSFORMATION in outcome.uncertain_interactions:
 		return False
 	ability_by_id = {item.id: to_id(item.ability or "") for item in knowledge.opponent_roster}
@@ -642,10 +639,7 @@ def _current_transformation(knowledge: KnowledgeState, pokemon_id: str):
 
 
 def _mega_available_for(knowledge: KnowledgeState, pokemon_id: str) -> bool:
-	for legal in knowledge.legal_actions:
-		if _candidate_transforms_pokemon(legal, knowledge, pokemon_id):
-			return True
-	return False
+	return any(_candidate_transforms_pokemon(legal, knowledge, pokemon_id) for legal in knowledge.legal_actions)
 
 
 def _candidate_transforms_pokemon(
