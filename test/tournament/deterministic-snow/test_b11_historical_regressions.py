@@ -73,6 +73,30 @@ def current_team_state(own_left, own_right, opponent_left=0, opponent_right=1):
 	return state
 
 
+def with_fresh_incineroar(state):
+	"""Give the inherited turn-3 fixture a real public Incineroar re-entry.
+
+	The base fixture starts Incineroar on the field and therefore correctly marks
+	its Fake Out stale by turn 3. Historical forks that require fresh Fake Out
+	must show it leaving on turn 1 and re-entering on turn 2 before the public
+	`|turn|3` boundary; manually supplying an impossible Fake Out response would
+	make a false-green policy regression.
+	"""
+	state = copy.deepcopy(state)
+	history = state["history"]
+	turn_two = next(
+		index for index, item in enumerate(history)
+		if item["type"] == "turn" and item["data"]["args"] == ["2"]
+	)
+	history.insert(turn_two, event(1, "switch", ["p2a: Gengar", "Gengar, L50", "100/100"]))
+	turn_three = next(
+		index for index, item in enumerate(history)
+		if item["type"] == "turn" and item["data"]["args"] == ["3"]
+	)
+	history.insert(turn_three, event(2, "switch", ["p2a: Incineroar", "Incineroar, L50", "100/100"]))
+	return state
+
+
 def historical_ranking(state, legal_actions, opponent_responses, mechanics):
 	"""Run the real B3/B4/B7/B8/B9 stack over one historical decision fork."""
 	state = copy.deepcopy(state)
@@ -131,12 +155,17 @@ def feature_value(candidate, feature_id):
 	return next(item.value for item in candidate.feature_contributions if item.feature_id == feature_id)
 
 
+def fake_out_is_fresh(knowledge, position="left"):
+	entry = next(item for item in knowledge.fake_out_eligibility if item.position == position)
+	return entry.known_fake_out is True and entry.eligible is True
+
+
 class B11HistoricalRegressionTests(unittest.TestCase):
 	def setUp(self):
 		self.mechanics = B11Mechanics()
 
 	def test_p0_03_fake_out_before_follow_me_makes_double_protect_safer(self):
-		state = current_team_state("team_2", "team_3", 0, 1)
+		state = with_fresh_incineroar(current_team_state("team_2", "team_3", 0, 1))
 		follow_body_press = {
 			"left": {"type": "move", "move": "followme"},
 			"right": {
@@ -156,9 +185,10 @@ class B11HistoricalRegressionTests(unittest.TestCase):
 				"right", "opponent_1", "closecombat", (OpponentActionRole.DAMAGE,), "right", "team_3",
 			),
 		)
-		_, _, ranking = historical_ranking(
+		knowledge, _, ranking = historical_ranking(
 			state, (follow_body_press, double_protect), (fresh_fake_out_focus,), self.mechanics,
 		)
+		self.assertTrue(fake_out_is_fresh(knowledge))
 		protected = candidate_with_move(ranking, "left", "protect")
 		follow = candidate_with_move(ranking, "left", "followme")
 		self.assertGreater(protected.final_score, follow.final_score)
@@ -186,7 +216,7 @@ class B11HistoricalRegressionTests(unittest.TestCase):
 		self.assertEqual(ranking.selected_action_id, protected.candidate.action_id)
 
 	def test_p0_05_boosted_glaceon_cashes_out_blizzard_on_two_low_targets(self):
-		state = current_team_state("team_0", "team_2", 0, 1)
+		state = with_fresh_incineroar(current_team_state("team_0", "team_2", 0, 1))
 		state["self"]["team"][0]["boosts"]["spa"] = 2
 		state["self"]["team"][0]["boosts"]["spd"] = 2
 		state["self"]["team"][3]["health"] = hp(0, 160)
@@ -205,9 +235,10 @@ class B11HistoricalRegressionTests(unittest.TestCase):
 				"right", "opponent_1", "closecombat", (OpponentActionRole.DAMAGE,), "right", "team_2",
 			),
 		)
-		_, _, ranking = historical_ranking(
+		knowledge, _, ranking = historical_ranking(
 			state, (blizzard, calm_mind, wish), (free_turn,), self.mechanics,
 		)
+		self.assertTrue(fake_out_is_fresh(knowledge))
 		cash_out = candidate_with_move(ranking, "left", "blizzard")
 		self.assertEqual(ranking.selected_action_id, cash_out.candidate.action_id)
 		self.assertTrue(any(
@@ -273,7 +304,7 @@ class B11HistoricalRegressionTests(unittest.TestCase):
 				self.assertEqual(ranking.selected_action_id, safe.candidate.action_id)
 
 	def test_p1_05_one_hp_heliolisk_is_worth_protecting_as_a_future_pivot(self):
-		state = current_team_state("team_5", "team_3", 0, 1)
+		state = with_fresh_incineroar(current_team_state("team_5", "team_3", 0, 1))
 		state["self"]["team"][5]["health"] = hp(1, 160)
 		state["self"]["team"][5]["item"] = None
 		state["opponent"]["active"]["right"]["health"] = hp(15, 100)
@@ -294,9 +325,10 @@ class B11HistoricalRegressionTests(unittest.TestCase):
 				"right", "opponent_1", "closecombat", (OpponentActionRole.DAMAGE,), "left", "team_5",
 			),
 		)
-		_, strategy, ranking = historical_ranking(
+		knowledge, strategy, ranking = historical_ranking(
 			state, (preserve, throw_away), (double_target,), self.mechanics,
 		)
+		self.assertTrue(fake_out_is_fresh(knowledge))
 		heliolisk = next(item for item in strategy.resources if item.pokemon_id == "team_5")
 		self.assertGreater(heliolisk.value, 0.0)
 		protected = candidate_with_move(ranking, "left", "protect")
