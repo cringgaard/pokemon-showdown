@@ -3,7 +3,7 @@ from __future__ import annotations
 import copy
 import unittest
 
-from test_b5_preview import FakeMechanics, FakeMove, preview_state
+from test_b5_preview import FakeMechanics, FakeMove, event, packed_sheet, preview_state
 
 from deterministic_snow import build_knowledge_state
 from deterministic_snow.preview import OpponentTag, PreviewContractError, assess_team_preview, build_opponent_roster_profile
@@ -67,19 +67,20 @@ class B5PreviewHardeningTests(unittest.TestCase):
 		base = assess_team_preview(self.knowledge(copy.deepcopy(base_state)), self.mechanics)
 
 		steel_state = preview_state()
-		steel_state["opponent"]["team"][3]["moves"] = [
+		# Amoonguss is not otherwise a Fire/Fighting/Rock/Steel pressure source in
+		# the base fixture, so adding Iron Head creates one additional dangerous
+		# Glaceon matchup instead of merely replacing one dangerous type with another.
+		steel_state["opponent"]["team"][5]["moves"] = [
+			{"id": "ragepowder", "name": "Rage Powder"},
+			{"id": "spore", "name": "Spore"},
 			{"id": "ironhead", "name": "Iron Head"},
-			{"id": "swordsdance", "name": "Swords Dance"},
-			{"id": "poisonjab", "name": "Poison Jab"},
 			{"id": "protect", "name": "Protect"},
 		]
-		# Rebuild the public OTS event so provenance exactly matches the modified set.
-		from test_b5_preview import event, packed_sheet
 		steel_state["history"] = [event("showteam", ["p2", packed_sheet(steel_state["opponent"]["team"])])]
 		steel_knowledge = self.knowledge(steel_state)
 		profile = build_opponent_roster_profile(steel_knowledge, self.mechanics)
-		sneasler = next(pokemon for pokemon in profile.pokemon if pokemon.species == "Sneasler")
-		self.assertIn(OpponentTag.STEEL_PRESSURE, sneasler.tags)
+		amoonguss = next(pokemon for pokemon in profile.pokemon if pokemon.species == "Amoonguss")
+		self.assertIn(OpponentTag.STEEL_PRESSURE, amoonguss.tags)
 
 		steel = assess_team_preview(steel_knowledge, self.mechanics)
 		team = ("team_0", "team_1", "team_2", "team_4")
