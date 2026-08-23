@@ -1,6 +1,6 @@
 # Deterministic snow policy
 
-This package contains the public-information foundation, static mechanics boundary, temporal knowledge reconstruction, baseline threat model, runtime strategy valuation, and OTS-only Team Preview policy for the deterministic Champions snow-team bot. It consumes the semantic `BotState.schema_version == 2` dictionary supplied to participant Python and does not import Pokemon Showdown simulator code.
+This package contains the public-information foundation, static mechanics boundary, temporal knowledge reconstruction, baseline threat model, runtime strategy valuation, OTS-only Team Preview policy, and OTS-only opponent response generator for the deterministic Champions snow-team bot. It consumes the semantic `BotState.schema_version == 2` dictionary supplied to participant Python and does not import Pokemon Showdown simulator code.
 
 The package intentionally has no `choose_action()` entrypoint yet.
 
@@ -12,6 +12,7 @@ The package intentionally has no `choose_action()` entrypoint yet.
 - `threats.py` is the B4 mechanics-to-threat boundary. It classifies known opponent moves, produces coarse public-information damage/KO bands for each active slot, preserves uncertainty when exact mechanics or opponent stats are unavailable, and summarizes double-target/status/control risk without assigning strategic importance to our targets.
 - `strategy.py` is downstream from the threat model. It continuously scores `GLACEON_FORTRESS`, `AGGRON_FORTRESS`, and `TACTICAL_OFFENSE`, applies configured interpretation thresholds, and then derives context-sensitive resource values with a configurable nonlinear HP utility curve. Resource values never feed back into the win-condition calculation.
 - `preview.py` is B5. It intentionally supports Open Team Sheets only. It derives opponent roster tags from the actual submitted moves/items/abilities and format-aware mechanics, keeps up to eight diverse opponent lead hypotheses, evaluates every harness-supplied ordered Bring-4 action, and scores preview plan viability, threat coverage, lead robustness, backline quality, specialist/synergy value, and structural holes. It never invents non-OTS moves or generates its own Team Preview candidates.
+- `responses.py` is B6. It intentionally supports OTS turn states only. It derives individual opponent move/target and switch hypotheses from the actual submitted sets, current selected-four knowledge, B3 history, B4 threats and the current strategy/resource picture. It retains a diverse 3–5-ish action set per active Pokemon through the shared configured cap, then preserves up to eight joint responses spanning maximum damage, primary-win-condition focus, Protect-plus-progress, disruption/setup, pivot lines and spread pressure. It does not inspect any one of our candidate actions and does not project turn outcomes.
 - `actions.py` canonicalizes only actions already present in `request.legal_actions`. Its versioned SHA-256 IDs cover Team Preview order, slot, action kind, target, and transformation.
 - `config.py` validates strict configuration sections for versions, action-feature weights, B4 strategy/resource weights, interpretation thresholds, opponent responses, runtime degradation, HP utility, and team roles. B4 scalar heuristic values have stable names in configuration rather than being buried in policy logic; action-scoring feature weights remain deliberately untuned zeros.
 - `features.py` owns stable feature IDs and metadata. It never owns weights.
@@ -33,6 +34,32 @@ If those conditions are not met, B5 raises `PreviewContractError`. Non-OTS move 
 Preview uses actual set information. For example, a Sneasler receives the `FAKE_OUT` tag only when Fake Out is on its submitted OTS set. Mega-stone transformations may contribute public transformed form/type/fixed-ability facts through the B2 mechanics snapshot, but preview does not simulate transformation timing.
 
 The initial preview score follows the design's configurable conceptual decomposition: 30% lead robustness, 25% primary-plan viability, 10% secondary-plan viability, 15% threat coverage, 10% backline quality and 10% synergy/specialist value, minus explicit structural penalties. `PreviewConfig` keeps all scalar preview heuristic values named rather than burying unexplained constants in decision logic.
+
+## B6 OTS response scope
+
+`generate_opponent_responses()` requires a normal `turn` state, an explicit public `showteam` event, six OTS-backed opponent roster entries, and established public identities for the currently active opponents. If those conditions are not met, B6 raises `ResponseContractError` rather than guessing a moveset or resolving an Illusion-like identity ambiguity.
+
+Individual move hypotheses are generated only from the submitted OTS moves. A stale Fake Out is excluded using B3 eligibility, and Protect exists only when it is actually on the set. Targeted moves are expanded across plausible current targets; spread/self/field actions stay targetless at this layer. Recent same-move/same-target history can raise plausibility only through the configured modest multipliers and repeated-pattern cap.
+
+Switch hypotheses come only from `CONFIRMED_SELECTED` or `POSSIBLE_SELECTED` bench candidates; `CONFIRMED_NOT_SELECTED` and publicly fainted candidates are excluded. B6 gives explicit semantic value to important public pivots such as Ghost into Body Press, Lightning Rod into Electric pressure, weather resets, Flash Fire, resistance gains and stronger offensive positioning. Unrevealed possible-selected switches retain the existing reduced multiplier instead of being treated as certain bench options.
+
+The B6 scoring constants live in strict `ResponseGenerationConfig` with stable IDs. The shared `PolicyConfig.opponent_response` section still owns the global action/response caps, history multipliers, and selected-four certainty multipliers.
+
+Most importantly, B6 has no candidate-action input. The dependency remains:
+
+```text
+state
+  ↓
+B3 public knowledge
+  ↓
+B4 threats + runtime strategy/resources
+  ↓
+B6 opponent response set
+  ↓
+B7 state + our candidate + one B6 response → projected outcome
+```
+
+This prevents the simulated opponent from seeing the hidden action currently being evaluated.
 
 ## Mechanics boundary
 
@@ -56,6 +83,8 @@ B4 baseline threats
 B4 win-condition viability
         ↓
 B4 strategic resource values
+        ↓
+B6 opponent responses
 ```
 
-B5 Team Preview consumes the same public knowledge/mechanics boundary before a battle state exists. Later phases may generate opponent responses and perform shallow tactical projection, but must continue treating `request.legal_actions` as authoritative and must not feed preferred strategy back into mechanical facts.
+B5 Team Preview consumes the same public knowledge/mechanics boundary before a battle state exists. B7 may perform shallow tactical projection, but must continue treating `request.legal_actions` as authoritative and must not feed preferred strategy back into mechanical facts.
