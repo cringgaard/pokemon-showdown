@@ -2,7 +2,7 @@
 
 This package is the public-information deterministic policy for the Champions snow team. It consumes only `BotState.schema_version == 2`, the harness-supplied legal actions, public battle history/Open Team Sheets, and a generated format-aware mechanics snapshot. It never imports Pokemon Showdown's Python-inaccessible simulator or receives the omniscient battle stream.
 
-B10 now exposes the participant-facing `choose_action(state)` entrypoint while preserving the phase boundaries developed in B1-B9.
+B10 exposes the participant-facing `choose_action(state)` entrypoint while preserving the phase boundaries developed in B1-B9. B11 adds a historical strategic regression layer around that policy without changing runtime policy semantics.
 
 ## Dependency graph
 
@@ -96,6 +96,27 @@ That separation is deliberate: later experiments can replace the current hand li
 B9 combines B8 utilities across the shared B6 response distribution. The initial robust score uses expected utility plus a credible bad case, then candidate-level robustness/fragility and strong post-projection tactical adjustments. Rare responses below the credibility threshold still contribute to expectation/variance but cannot become the policy-driving bad case or fire tactical rules.
 
 The tactical layer adjusts scores; it does not bypass projection or generate moves. Current rules include Follow Me rescue, obvious lethal Glaceon conversion, cash-out, failed weather-dependent Veil, stat-drop ability punishment, genuinely zero-effect attacks and base-Aggron danger when Mega is legally available.
+
+## B11 historical regression boundary
+
+B11 treats the manually analysed ladder games as a source of strategic invariants and failure modes, not as a dataset for fitting the current numeric weights. Historical tests therefore prefer relational assertions such as “Protect ranks above another Calm Mind under lethal focus” or “Freeze-Dry ranks above Aurora Veil into a Pelipper reset” instead of pinning exact utility values.
+
+The dedicated `test_b11_historical_regressions.py` suite runs public B3 knowledge and B4 strategy, then evaluates the historical decision fork through B7 projection, B8 semantic features/utility and B9 robust ranking. The opponent responses in these tests are explicit public-information fixtures representing the particular read being preserved. B6 has its own candidate-independent generation tests; historical regressions do not force B6's search heuristics to reproduce one exact response-set composition before they can protect a downstream strategic lesson.
+
+The initial B11 catalogue protects these current-team behaviors:
+
+- fresh Fake Out acts before Follow Me, so deterministic protection can beat relying on redirection;
+- an established boosted Glaceon protects under lethal focus rather than greedily adding setup;
+- boosted Glaceon cashes out Blizzard when both opponents are already in reliable KO range;
+- Freeze-Dry punishes the Pelipper slot when a weather reset would make Aurora Veil fail;
+- publicly known Defiant, Competitive or Contrary makes a surviving Mud-Slap target strategically dangerous;
+- a 1 HP Heliolisk can retain enough future pivot value to justify Protect under a predicted double target;
+- Ninetales weather reset plus partner Protect can improve a rain position;
+- Wide Guard plus partner Protect can hedge spread pressure against a credible single-target adaptation.
+
+Historical fixtures must remain mechanically possible. For example, Fake Out cases include public switch chronology that makes B3 itself mark the user as fresh; a manually injected response is not allowed to bypass the knowledge model and create a false-green test.
+
+Because B11 currently adds tests and documentation rather than changing runtime semantics, the production policy/version identifiers remain at B10. A future behavior change discovered by a historical regression should receive its own named feature/rule/configuration change and corresponding version update rather than being hidden in the test fixture.
 
 ## Mechanics artifact and participant packaging
 
