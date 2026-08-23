@@ -20,6 +20,14 @@ function restoreMechanicsPath(previous) {
 	}
 }
 
+function playerDiagnostics(player) {
+	return JSON.stringify({
+		stats: player.stats,
+		fallback_log: player.fallback_log,
+		stderr: player.stderr,
+	}, null, 2);
+}
+
 describe('Deterministic snow B10 MatchRunner integration', function () {
 	this.timeout(90_000);
 
@@ -40,10 +48,11 @@ describe('Deterministic snow B10 MatchRunner integration', function () {
 			}).run();
 			assert(result.winner || result.tie);
 			assert(result.turns > 0);
-			assert.equal(result.players.p1.stats.invalid_responses, 0);
-			assert.equal(result.players.p1.stats.timeouts, 0);
-			assert.equal(result.players.p1.stats.fallbacks, 0);
-			assert.equal(result.players.p1.stats.exceptions, 0);
+			const diagnostics = playerDiagnostics(result.players.p1);
+			assert.equal(result.players.p1.stats.invalid_responses, 0, diagnostics);
+			assert.equal(result.players.p1.stats.timeouts, 0, diagnostics);
+			assert.equal(result.players.p1.stats.fallbacks, 0, diagnostics);
+			assert.equal(result.players.p1.stats.exceptions, 0, diagnostics);
 			assert.equal(result.players.p1.states[0].battle.phase, 'team_preview');
 			assert.equal(result.players.p1.states[0].request.legal_actions.length, 360);
 			assert(result.players.p1.states.some(state => state.battle.phase === 'turn'));
