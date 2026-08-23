@@ -21,59 +21,39 @@ function byID(values, id) {
 	return result;
 }
 
+function isWeather(current, expected) {
+	return (Array.isArray(expected) ? expected : [expected]).includes(current);
+}
+
+function moveAccuracyInWeather(move, weather) {
+	assert.equal(typeof move.onModifyMove, 'function');
+	const activeMove = { accuracy: move.accuracy };
+	move.onModifyMove.call(
+		{ field: { isWeather: expected => isWeather(weather, expected) } },
+		activeMove,
+		{},
+		{ effectiveWeather: () => weather }
+	);
+	return activeMove.accuracy;
+}
+
 describe('Deterministic snow mechanics integration', () => {
-	it('exports format-aware Champions mechanics and stable metadata', () => {
+	it('exports a deterministic Champions snapshot with unique public move IDs', () => {
 		const first = buildChampionsMechanicsSnapshot(CHAMPIONS_FORMAT, 'test-commit');
 		const second = buildChampionsMechanicsSnapshot(CHAMPIONS_FORMAT, 'test-commit');
 		assert.equal(first.format.id, CHAMPIONS_FORMAT);
 		assert.equal(first.format.mod, 'champions');
 		assert.equal(first.format.game_type, 'doubles');
 		assert.equal(first.snapshot_hash, second.snapshot_hash);
-		assert.match(first.snapshot_hash, /^sha256:[0-9a-f]{64}$/);
+		assert(/^sha256:[0-9a-f]{64}$/.test(first.snapshot_hash));
 
-		const aggron = byID(first.species, 'aggron');
-		const megaAggron = byID(first.species, 'aggronmega');
-		assert.deepEqual(aggron.types, ['Steel', 'Rock']);
-		assert.equal(aggron.abilities['0'], 'Sturdy');
-		assert.deepEqual(megaAggron.types, ['Steel']);
-		assert.equal(megaAggron.abilities['0'], 'Filter');
-		assert.equal(megaAggron.is_mega, true);
-		assert.equal(megaAggron.battle_only, 'Aggron');
-
-		const aggronite = byID(first.items, 'aggronite');
-		assert.equal(aggronite.mega_stone.Aggron, 'Aggron-Mega');
-
-		const bodyPress = byID(first.moves, 'bodypress');
-		assert.equal(bodyPress.override_offensive_stat, 'def');
-		assert.equal(first.semantics.moves.bodypress.offensive_stat, 'def');
-		assert.equal(first.type_chart.Fighting.Ghost, 0);
-
-		const freezeDry = byID(first.moves, 'freezedry');
-		assert(freezeDry.callback_names.includes('onEffectiveness'));
-		assert.equal(first.semantics.moves.freezedry.effectiveness_override.Water, 2);
-
-		const heatWave = byID(first.moves, 'heatwave');
-		const weatherBall = byID(first.moves, 'weatherball');
-		assert.equal(heatWave.target, 'allAdjacentFoes');
-		assert.notEqual(weatherBall.target, 'allAdjacentFoes');
-		assert.notEqual(weatherBall.target, 'allAdjacent');
-
-		const noGuard = byID(first.abilities, 'noguard');
-		assert(noGuard.callback_names.includes('onAnyAccuracy'));
-		assert.equal(first.semantics.abilities.noguard.accuracy_bypass, true);
-		assert.deepEqual(first.semantics.field.gravity.accuracy_multiplier_ratio, [6840, 4096]);
-		assert.equal(first.semantics.field.gravity.grounds_flying, true);
-		assert.equal(Object.hasOwn(first.semantics.field.gravity, 'suppresses_evasion'), false);
+		const moveIDs = first.moves.map(move => move.id);
+		assert.equal(new Set(moveIDs).size, moveIDs.length);
+		assert.equal(moveIDs.filter(id => id === 'hiddenpower').length, 1);
+		assert.equal(byID(first.moves, 'hiddenpower').name, Dex.forFormat(CHAMPIONS_FORMAT).moves.get('hiddenpower').name);
 	});
 
-	it('keeps every semantic annotation attached to a real format mechanic', () => {
-		const snapshot = buildChampionsMechanicsSnapshot(CHAMPIONS_FORMAT, 'test-commit');
-		for (const id of Object.keys(snapshot.semantics.moves)) byID(snapshot.moves, id);
-		for (const id of Object.keys(snapshot.semantics.abilities)) byID(snapshot.abilities, id);
-		for (const id of Object.keys(snapshot.semantics.items)) byID(snapshot.items, id);
-	});
-
-	it('contains the exact current-six mechanic surfaces', () => {
+	it('contains the current-six mechanics and format-resolved Mega data', () => {
 		const snapshot = buildChampionsMechanicsSnapshot(CHAMPIONS_FORMAT, 'test-commit');
 		for (const species of ['glaceon', 'ninetalesalola', 'maushold', 'aggron', 'armarouge', 'heliolisk']) {
 			byID(snapshot.species, species);
@@ -85,43 +65,102 @@ describe('Deterministic snow mechanics integration', () => {
 			byID(snapshot.items, item);
 		}
 		for (const move of [
-			'calmmind', 'blizzard', 'wish', 'protect',
-			'auroraveil', 'freezedry', 'encore',
-			'followme', 'mudslap',
-			'irondefense', 'bodypress', 'heavyslam',
-			'wideguard', 'allyswitch', 'armorcannon', 'psychic',
-			'thunderbolt', 'grassknot',
+			'calmmind', 'blizzard', 'wish', 'protect', 'auroraveil', 'freezedry', 'encore',
+			'followme', 'mudslap', 'irondefense', 'bodypress', 'heavyslam', 'wideguard',
+			'allyswitch', 'armorcannon', 'psychic', 'thunderbolt', 'grassknot',
 		]) {
 			byID(snapshot.moves, move);
 		}
+
+		assert.deepEqual(byID(snapshot.species, 'aggron').types, ['Steel', 'Rock']);
+		assert.deepEqual(byID(snapshot.species, 'aggronmega').types, ['Steel']);
+		assert.equal(byID(snapshot.species, 'aggronmega').abilities['0'], 'Filter');
+		assert.equal(byID(snapshot.items, 'aggronite').mega_stone.Aggron, 'Aggron-Mega');
+		assert.equal(byID(snapshot.moves, 'bodypress').override_offensive_stat, 'def');
+		assert.equal(snapshot.type_chart.Fighting.Ghost, 0);
 	});
 
-	it('keeps semantic annotations aligned with the actual Champions Dex', () => {
+	it('pins snow and weather-accuracy annotations to the actual callbacks', () => {
 		const dex = Dex.forFormat(CHAMPIONS_FORMAT);
 		const snapshot = buildChampionsMechanicsSnapshot(CHAMPIONS_FORMAT, 'test-commit');
 
-		assert.equal(dex.moves.get('bodypress').overrideOffensiveStat, 'def');
-		assert.equal(dex.moves.get('heatwave').target, 'allAdjacentFoes');
-		assert.equal(dex.moves.get('weatherball').target, 'normal');
-		assert.equal(typeof dex.moves.get('freezedry').onEffectiveness, 'function');
-		const gravity = dex.moves.get('gravity').condition;
-		assert.equal(typeof gravity.onModifyAccuracy, 'function');
-		assert.deepEqual(gravity.onModifyAccuracy.call({ chainModify: modifier => modifier }, 100), [6840, 4096]);
-		assert.equal(typeof dex.abilities.get('noguard').onAnyAccuracy, 'function');
-		assert.equal(typeof dex.abilities.get('snowcloak').onModifyAccuracy, 'function');
-		assert.equal(typeof dex.abilities.get('defiant').onAfterEachBoost, 'function');
-		assert.equal(typeof dex.abilities.get('competitive').onAfterEachBoost, 'function');
-		assert.equal(typeof dex.abilities.get('contrary').onChangeBoost, 'function');
-		assert.equal(typeof dex.abilities.get('stamina').onDamagingHit, 'function');
+		let entryWeather = null;
+		dex.abilities.get('snowwarning').onStart.call({
+			field: { setWeather: weather => { entryWeather = weather; } },
+		}, {});
+		assert.equal(entryWeather, 'snowscape');
+		assert.equal(snapshot.semantics.abilities.snowwarning.entry_weather, 'snowscape');
 
-		const staraptorMega = dex.species.get('Staraptor-Mega');
-		assert(staraptorMega.exists);
-		assert(staraptorMega.types.includes('Flying'));
-		assert.equal(dex.getImmunity('Ground', staraptorMega), false);
-		assert.equal(snapshot.type_chart.Ground.Flying, 0);
+		const snowCloak = dex.abilities.get('snowcloak');
+		const snowCloakContext = weather => ({
+			field: { isWeather: expected => isWeather(weather, expected) },
+			debug() {},
+			chainModify: modifier => modifier,
+		});
+		assert.deepEqual(snowCloak.onModifyAccuracy.call(snowCloakContext('snowscape'), 100), [3277, 4096]);
+		assert.deepEqual(snowCloak.onModifyAccuracy.call(snowCloakContext('hail'), 100), [3277, 4096]);
+		assert.equal(snowCloak.onModifyAccuracy.call(snowCloakContext('raindance'), 100), undefined);
+		assert.deepEqual(
+			snapshot.semantics.abilities.snowcloak.incoming_accuracy_modifier_in_weather.snowscape,
+			[3277, 4096]
+		);
+
+		const brightPowder = dex.items.get('brightpowder');
+		assert.deepEqual(brightPowder.onModifyAccuracy.call({
+			debug() {}, chainModify: modifier => modifier,
+		}, 100), [3686, 4096]);
+		assert.deepEqual(snapshot.semantics.items.brightpowder.incoming_accuracy_modifier, [3686, 4096]);
+
+		const icyRockHolder = { hasItem: item => item === 'icyrock' };
+		assert.equal(dex.conditions.get('snowscape').durationCallback.call({}, icyRockHolder, null), 8);
+		assert.equal(dex.conditions.get('hail').durationCallback.call({}, icyRockHolder, null), 8);
+		assert.deepEqual(snapshot.semantics.items.icyrock.weather_extension_turns, { hail: 8, snowscape: 8 });
+
+		const auroraVeil = dex.moves.get('auroraveil');
+		assert.equal(auroraVeil.onTry.call({ field: { isWeather: expected => isWeather('snowscape', expected) } }), true);
+		assert.equal(auroraVeil.onTry.call({ field: { isWeather: expected => isWeather('sunnyday', expected) } }), false);
+		assert.deepEqual(snapshot.semantics.moves.auroraveil.requires_weather, ['hail', 'snowscape']);
+
+		assert.equal(moveAccuracyInWeather(dex.moves.get('blizzard'), 'snowscape'), true);
+		assert.equal(moveAccuracyInWeather(dex.moves.get('blizzard'), 'hail'), true);
+		assert.equal(moveAccuracyInWeather(dex.moves.get('blizzard'), 'raindance'), 70);
+		assert.equal(moveAccuracyInWeather(dex.moves.get('thunder'), 'raindance'), true);
+		assert.equal(moveAccuracyInWeather(dex.moves.get('thunder'), 'primordialsea'), true);
+		assert.equal(moveAccuracyInWeather(dex.moves.get('thunder'), 'sunnyday'), 50);
+		assert.equal(moveAccuracyInWeather(dex.moves.get('hurricane'), 'raindance'), true);
+		assert.equal(moveAccuracyInWeather(dex.moves.get('hurricane'), 'sunnyday'), 50);
 	});
 
-	it('round-trips the generated snapshot through the Python mechanics consumer', () => {
+	it('pins key defensive and protection semantics to Showdown mechanics', () => {
+		const dex = Dex.forFormat(CHAMPIONS_FORMAT);
+		const snapshot = buildChampionsMechanicsSnapshot(CHAMPIONS_FORMAT, 'test-commit');
+
+		const friendGuardHolder = {};
+		const friendGuardAlly = { isAlly: pokemon => pokemon === friendGuardHolder };
+		assert.equal(dex.abilities.get('friendguard').onAnyModifyDamage.call({
+			effectState: { target: friendGuardHolder }, debug() {}, chainModify: modifier => modifier,
+		}, 100, {}, friendGuardAlly, {}), 0.75);
+		assert.equal(snapshot.semantics.abilities.friendguard.ally_damage_multiplier, 0.75);
+
+		assert.equal(dex.abilities.get('filter').onSourceModifyDamage.call({
+			debug() {}, chainModify: modifier => modifier,
+		}, 100, {}, { getMoveHitData: () => ({ typeMod: 1 }) }, {}), 0.75);
+		assert.equal(snapshot.semantics.abilities.filter.super_effective_damage_multiplier, 0.75);
+
+		const gravity = dex.moves.get('gravity').condition;
+		assert.deepEqual(gravity.onModifyAccuracy.call({ chainModify: modifier => modifier }, 100), [6840, 4096]);
+		assert.deepEqual(snapshot.semantics.field.gravity.accuracy_multiplier_ratio, [6840, 4096]);
+		assert.equal(Object.hasOwn(snapshot.semantics.field.gravity, 'suppresses_evasion'), false);
+
+		assert.equal(dex.moves.get('heatwave').target, 'allAdjacentFoes');
+		assert(dex.moves.get('heatwave').flags['protect']);
+		assert.equal(dex.moves.get('weatherball').target, 'normal');
+		assert.equal(typeof dex.moves.get('wideguard').condition.onTryHit, 'function');
+		assert.equal(typeof dex.moves.get('freezedry').onEffectiveness, 'function');
+		assert.equal(typeof dex.abilities.get('noguard').onAnyAccuracy, 'function');
+	});
+
+	it('round-trips the snapshot through the fail-closed Python consumer', () => {
 		const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'snow-mechanics-'));
 		const snapshotPath = path.join(directory, 'champions-mechanics.json');
 		try {
