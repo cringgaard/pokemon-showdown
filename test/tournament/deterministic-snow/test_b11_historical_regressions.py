@@ -6,7 +6,7 @@ import unittest
 
 from test_b10_policy import B10Mechanics
 from test_b6_responses import event, packed_sheet
-from test_b7_projection import ProjectionMove, hp, state_with, switch_response
+from test_b7_projection import ProjectionMove, ProjectionSpecies, hp, state_with, switch_response
 from test_b8_scoring import response, response_action
 
 from deterministic_snow import build_knowledge_state
@@ -29,9 +29,28 @@ class B11Mechanics(B10Mechanics):
 	"""Synthetic mechanics broad enough for the historical current-team positions.
 
 	The lower B2/B7 suites pin the actual Showdown mechanics. These additions only
-	let the historical policy regressions express current-team moves that were not
-	needed by the older projection fixture.
+	let the historical policy regressions express current-team moves/species that
+	were not needed by the older projection fixture.
 	"""
+
+	SPECIES = dict(B10Mechanics.SPECIES)
+	SPECIES.update({
+		"Kingambit": ProjectionSpecies(
+			"Kingambit", "Kingambit", ("Dark", "Steel"),
+			{"hp": 100, "atk": 135, "def": 120, "spa": 60, "spd": 85, "spe": 50},
+			(("0", "defiant"),), 120.0,
+		),
+		"Milotic": ProjectionSpecies(
+			"Milotic", "Milotic", ("Water",),
+			{"hp": 95, "atk": 60, "def": 79, "spa": 100, "spd": 125, "spe": 81},
+			(("0", "competitive"),), 162.0,
+		),
+		"Serperior": ProjectionSpecies(
+			"Serperior", "Serperior", ("Grass",),
+			{"hp": 75, "atk": 75, "def": 95, "spa": 75, "spd": 95, "spe": 113},
+			(("0", "contrary"),), 63.0,
+		),
+	})
 
 	MOVES = dict(B10Mechanics.MOVES)
 	MOVES.update({
@@ -74,14 +93,7 @@ def current_team_state(own_left, own_right, opponent_left=0, opponent_right=1):
 
 
 def with_fresh_incineroar(state):
-	"""Give the inherited turn-3 fixture a real public Incineroar re-entry.
-
-	The base fixture starts Incineroar on the field and therefore correctly marks
-	its Fake Out stale by turn 3. Historical forks that require fresh Fake Out
-	must show it leaving on turn 1 and re-entering on turn 2 before the public
-	`|turn|3` boundary; manually supplying an impossible Fake Out response would
-	make a false-green policy regression.
-	"""
+	"""Give the inherited turn-3 fixture a real public Incineroar re-entry."""
 	state = copy.deepcopy(state)
 	history = state["history"]
 	turn_two = next(
@@ -94,6 +106,49 @@ def with_fresh_incineroar(state):
 		if item["type"] == "turn" and item["data"]["args"] == ["3"]
 	)
 	history.insert(turn_three, event(2, "switch", ["p2a: Incineroar", "Incineroar, L50", "100/100"]))
+	return state
+
+
+def with_stat_drop_punisher(state, species, ability):
+	"""Replace opponent_0 with a real species/ability combination consistently.
+
+	B11 historical states must remain mechanically possible even when they are
+	synthetic reductions of a ladder lesson. Keep OTS, current active state and
+	public switch history aligned so B3 never has to reconcile a fictitious
+	Incineroar with Defiant/Competitive/Contrary.
+	"""
+	state = copy.deepcopy(state)
+	roster = state["opponent"]["team"]
+	roster[0].update({
+		"species": species,
+		"name": species,
+		"ability": ability,
+		"moves": [{"id": "protect", "name": "Protect"}],
+	})
+	species_data = B11Mechanics.SPECIES[species]
+	state["opponent"]["active"]["left"].update({
+		"apparent_species": species,
+		"team_id": "opponent_0",
+		"ability": ability,
+		"types": list(species_data.types),
+	})
+
+	rewritten_history = []
+	for item in state["history"]:
+		args = item["data"]["args"]
+		if item["type"] == "switch" and args and args[0] == "p2a: Incineroar":
+			rewritten_history.append(event(
+				item["turn"], "switch", [f"p2a: {species}", f"{species}, L50", args[2]],
+			))
+		else:
+			rewritten_history.append(item)
+	state["history"] = rewritten_history
+	for index, item in enumerate(state["history"]):
+		if item["type"] == "showteam":
+			state["history"][index] = event(
+				item["turn"], "showteam", ["p2", packed_sheet(roster)],
+			)
+			break
 	return state
 
 
@@ -270,13 +325,14 @@ class B11HistoricalRegressionTests(unittest.TestCase):
 		))
 
 	def test_p0_10_known_stat_drop_punishing_abilities_make_mud_slap_lose(self):
-		for ability in ("defiant", "competitive", "contrary"):
-			with self.subTest(ability=ability):
-				state = current_team_state("team_2", "team_3", 0, 1)
-				state["opponent"]["team"][0]["ability"] = ability
-				state["opponent"]["active"]["left"]["ability"] = ability
-				state["history"][0] = event(
-					0, "showteam", ["p2", packed_sheet(state["opponent"]["team"])],
+		for species, ability in (
+			("Kingambit", "defiant"),
+			("Milotic", "competitive"),
+			("Serperior", "contrary"),
+		):
+			with self.subTest(species=species, ability=ability):
+				state = with_stat_drop_punisher(
+					current_team_state("team_2", "team_3", 0, 1), species, ability,
 				)
 				common_right = {
 					"type": "move", "move": "bodypress", "target": "opponent_right",
@@ -290,9 +346,12 @@ class B11HistoricalRegressionTests(unittest.TestCase):
 				passive = response(response_action(
 					"right", "opponent_1", "protect", (OpponentActionRole.PROTECT,),
 				))
-				_, _, ranking = historical_ranking(
+				knowledge, _, ranking = historical_ranking(
 					state, (mud_slap, conservative), (passive,), self.mechanics,
 				)
+				left = next(item for item in knowledge.opponent_active if item.position == "left")
+				self.assertEqual(left.established_identity.value, "opponent_0")
+				self.assertEqual(left.ability.value, ability)
 				punished = candidate_with_move(ranking, "left", "mudslap")
 				safe = candidate_with_move(ranking, "left", "protect")
 				self.assertTrue(any(
