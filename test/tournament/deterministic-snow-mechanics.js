@@ -37,6 +37,21 @@ function moveAccuracyInWeather(move, weather) {
 	return activeMove.accuracy;
 }
 
+function resistBerryModifier(item, type) {
+	const target = {
+		volatiles: {},
+		getMoveHitData: () => ({ typeMod: 1 }),
+		eatItem: () => true,
+	};
+	return item.onSourceModifyDamage.call({
+		gen: 9,
+		debug() {},
+		add() {},
+		effect: item,
+		chainModify: modifier => modifier,
+	}, 100, {}, target, { type, flags: {}, infiltrates: false });
+}
+
 describe('Deterministic snow mechanics integration', () => {
 	it('exports a deterministic Champions snapshot with unique public move IDs', () => {
 		const first = buildChampionsMechanicsSnapshot(CHAMPIONS_FORMAT, 'test-commit');
@@ -51,6 +66,13 @@ describe('Deterministic snow mechanics integration', () => {
 		assert.equal(new Set(moveIDs).size, moveIDs.length);
 		assert.equal(moveIDs.filter(id => id === 'hiddenpower').length, 1);
 		assert.equal(byID(first.moves, 'hiddenpower').name, Dex.forFormat(CHAMPIONS_FORMAT).moves.get('hiddenpower').name);
+	});
+
+	it('keeps every semantic annotation attached to a real format mechanic', () => {
+		const snapshot = buildChampionsMechanicsSnapshot(CHAMPIONS_FORMAT, 'test-commit');
+		for (const id of Object.keys(snapshot.semantics.moves)) byID(snapshot.moves, id);
+		for (const id of Object.keys(snapshot.semantics.abilities)) byID(snapshot.abilities, id);
+		for (const id of Object.keys(snapshot.semantics.items)) byID(snapshot.items, id);
 	});
 
 	it('contains the current-six mechanics and format-resolved Mega data', () => {
@@ -131,7 +153,7 @@ describe('Deterministic snow mechanics integration', () => {
 		assert.equal(moveAccuracyInWeather(dex.moves.get('hurricane'), 'sunnyday'), 50);
 	});
 
-	it('pins key defensive and protection semantics to Showdown mechanics', () => {
+	it('pins current-six defensive ability and item semantics to Showdown callbacks', () => {
 		const dex = Dex.forFormat(CHAMPIONS_FORMAT);
 		const snapshot = buildChampionsMechanicsSnapshot(CHAMPIONS_FORMAT, 'test-commit');
 
@@ -147,6 +169,40 @@ describe('Deterministic snow mechanics integration', () => {
 		}, 100, {}, { getMoveHitData: () => ({ typeMod: 1 }) }, {}), 0.75);
 		assert.equal(snapshot.semantics.abilities.filter.super_effective_damage_multiplier, 0.75);
 
+		const flashFire = dex.abilities.get('flashfire');
+		const fireMove = { type: 'Fire', accuracy: 70 };
+		assert.equal(flashFire.onTryHit.call({ add() {} }, { addVolatile: () => true }, {}, fireMove), null);
+		assert.equal(fireMove.accuracy, true);
+		assert.equal(flashFire.condition.onModifySpA.call({
+			debug() {}, chainModify: modifier => modifier,
+		}, 100, { hasAbility: ability => ability === 'flashfire' }, {}, { type: 'Fire' }), 1.5);
+		assert.equal(snapshot.semantics.abilities.flashfire.fire_immunity, true);
+		assert.equal(snapshot.semantics.abilities.flashfire.fire_power_multiplier_after_activation, 1.5);
+
+		const drySkin = dex.abilities.get('dryskin');
+		let drySkinHeal = 0;
+		assert.equal(drySkin.onTryHit.call({
+			heal: amount => { drySkinHeal = amount; return true; }, add() {},
+		}, { baseMaxhp: 200 }, {}, { type: 'Water' }), null);
+		assert.equal(drySkinHeal, 50);
+		assert.equal(drySkin.onSourceBasePower.call({ chainModify: modifier => modifier }, 100, {}, {}, { type: 'Fire' }), 1.25);
+		assert.equal(snapshot.semantics.abilities.dryskin.water_immunity_and_heal_fraction, 0.25);
+		assert.equal(snapshot.semantics.abilities.dryskin.fire_damage_multiplier, 1.25);
+
+		const focusSash = dex.items.get('focussash');
+		assert.equal(focusSash.onDamage(100, { hp: 100, maxhp: 100, useItem: () => true }, {}, { effectType: 'Move' }), 99);
+		assert.equal(snapshot.semantics.items.focussash.survive_full_hp_lethal_hit, true);
+
+		assert.equal(resistBerryModifier(dex.items.get('chopleberry'), 'Fighting'), 0.5);
+		assert.equal(resistBerryModifier(dex.items.get('colburberry'), 'Dark'), 0.5);
+		assert.deepEqual(snapshot.semantics.items.chopleberry.super_effective_type_damage_multiplier, { Fighting: 0.5 });
+		assert.deepEqual(snapshot.semantics.items.colburberry.super_effective_type_damage_multiplier, { Dark: 0.5 });
+	});
+
+	it('pins protection and remaining important control semantics to Showdown mechanics', () => {
+		const dex = Dex.forFormat(CHAMPIONS_FORMAT);
+		const snapshot = buildChampionsMechanicsSnapshot(CHAMPIONS_FORMAT, 'test-commit');
+
 		const gravity = dex.moves.get('gravity').condition;
 		assert.deepEqual(gravity.onModifyAccuracy.call({ chainModify: modifier => modifier }, 100), [6840, 4096]);
 		assert.deepEqual(snapshot.semantics.field.gravity.accuracy_multiplier_ratio, [6840, 4096]);
@@ -158,6 +214,16 @@ describe('Deterministic snow mechanics integration', () => {
 		assert.equal(typeof dex.moves.get('wideguard').condition.onTryHit, 'function');
 		assert.equal(typeof dex.moves.get('freezedry').onEffectiveness, 'function');
 		assert.equal(typeof dex.abilities.get('noguard').onAnyAccuracy, 'function');
+		assert.equal(typeof dex.abilities.get('defiant').onAfterEachBoost, 'function');
+		assert.equal(typeof dex.abilities.get('competitive').onAfterEachBoost, 'function');
+		assert.equal(typeof dex.abilities.get('contrary').onChangeBoost, 'function');
+		assert.equal(typeof dex.abilities.get('stamina').onDamagingHit, 'function');
+
+		const staraptorMega = dex.species.get('Staraptor-Mega');
+		assert(staraptorMega.exists);
+		assert(staraptorMega.types.includes('Flying'));
+		assert.equal(dex.getImmunity('Ground', staraptorMega), false);
+		assert.equal(snapshot.type_chart.Ground.Flying, 0);
 	});
 
 	it('round-trips the snapshot through the fail-closed Python consumer', () => {
