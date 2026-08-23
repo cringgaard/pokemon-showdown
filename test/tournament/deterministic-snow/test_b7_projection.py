@@ -429,7 +429,7 @@ class B7ProjectionTests(unittest.TestCase):
 		state = state_with("team_4", "team_5", 2, 1)
 		knowledge, candidate = make_candidate(state, {
 			"left": {"type": "move", "move": "allyswitch"},
-			"right": {"type": "move", "move": "protect"},
+			"right": {"type": "move", "move": "thunderbolt", "target": "opponent_right"},
 		}, self.mechanics)
 		result = project_turn(knowledge, self.mechanics, candidate, joint(
 			move_response("left", "opponent_2", "shadowball", "left", "team_4")
