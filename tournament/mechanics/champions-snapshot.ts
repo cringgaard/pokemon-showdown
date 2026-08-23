@@ -112,6 +112,7 @@ const SEMANTICS: SemanticAnnotations = {
 	abilities: {
 		noguard: { accuracy_bypass: true, invulnerability_bypass: true },
 		lightningrod: { electric_redirection: true, electric_immunity: true, spa_boost_on_redirect: 1 },
+		sturdy: { survive_full_hp_lethal_hit: true },
 		stamina: { defense_boost_on_damaging_hit: 1 },
 		defiant: { attack_boost_on_opponent_stat_drop: 2 },
 		competitive: { spa_boost_on_opponent_stat_drop: 2 },
