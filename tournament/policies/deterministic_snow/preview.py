@@ -35,6 +35,7 @@ class OpponentTag(str, Enum):
 	FIGHTING_PRESSURE = "FIGHTING_PRESSURE"
 	FIRE_PRESSURE = "FIRE_PRESSURE"
 	ROCK_PRESSURE = "ROCK_PRESSURE"
+	STEEL_PRESSURE = "STEEL_PRESSURE"
 	GROUND_PRESSURE = "GROUND_PRESSURE"
 	WATER_PRESSURE = "WATER_PRESSURE"
 	ELECTRIC_PRESSURE = "ELECTRIC_PRESSURE"
@@ -450,7 +451,6 @@ def generate_opponent_lead_hypotheses(
 	config: PreviewConfig | None = None,
 ) -> tuple[OpponentLeadHypothesis, ...]:
 	config = config or default_preview_config()
-	profiles = {profile.pokemon_id: profile for profile in roster.pokemon}
 	pair_values: list[tuple[tuple[str, str], float, tuple[str, ...]]] = []
 	for left, right in combinations(roster.pokemon, 2):
 		score, reasons = _lead_hypothesis_score(left, right, mechanics, config)
@@ -460,27 +460,17 @@ def generate_opponent_lead_hypotheses(
 	seen_members: set[str] = set()
 	remaining = list(pair_values)
 	while remaining and len(selected) < config.max_lead_hypotheses:
-		best = max(
-			remaining,
-			key=lambda item: (
-				item[1] + config.weights["LEAD_DIVERSITY_NEW_MEMBER"] * sum(member not in seen_members for member in item[0]),
-				-item[0].__hash__(),
+		adjusted = [(
+			item[1] + config.weights["LEAD_DIVERSITY_NEW_MEMBER"] * sum(
+				member not in seen_members for member in item[0]
 			),
+			item,
+		) for item in remaining]
+		best_adjusted = max(score for score, _ in adjusted)
+		best = min(
+			(item for score, item in adjusted if math.isclose(score, best_adjusted, abs_tol=1e-12)),
+			key=lambda item: item[0],
 		)
-		# max() tie-breaking on tuple hashes is not stable across Python processes;
-		# replace any score tie with canonical lexical selection below.
-		best_adjusted = best[1] + config.weights["LEAD_DIVERSITY_NEW_MEMBER"] * sum(
-			member not in seen_members for member in best[0]
-		)
-		tied = [
-			item for item in remaining
-			if math.isclose(
-				item[1] + config.weights["LEAD_DIVERSITY_NEW_MEMBER"] * sum(member not in seen_members for member in item[0]),
-				best_adjusted,
-				abs_tol=1e-12,
-			)
-		]
-		best = min(tied, key=lambda item: item[0])
 		selected.append(best)
 		seen_members.update(best[0])
 		remaining.remove(best)
@@ -506,6 +496,8 @@ def _require_ots_preview(knowledge: KnowledgeState) -> None:
 
 
 def _require_ots_roster(knowledge: KnowledgeState) -> None:
+	if not any(event.type == "showteam" for event in knowledge.history.events):
+		raise PreviewContractError("B5 OTS preview requires a public showteam event")
 	if len(knowledge.opponent_roster) != 6:
 		raise PreviewContractError("B5 OTS preview requires all six opponent roster entries")
 	for pokemon in knowledge.opponent_roster:
@@ -565,7 +557,7 @@ def _profile_opponent(pokemon: OpponentRosterKnowledge, mechanics: MechanicsSnap
 
 	for known_move in pokemon.moves:
 		move = mechanics.move(known_move.id)
-		if move.base_power > 0:
+		if _is_damaging_move(move, mechanics):
 			pressure_types.add(move.type)
 			if move.category == "Physical":
 				physical += 1
@@ -644,11 +636,22 @@ def _safe_semantic(mechanics: MechanicsSnapshot, category: str, value: str) -> d
 		return {}
 
 
+def _is_damaging_move(move: object, mechanics: MechanicsSnapshot) -> bool:
+	"""Recognize B2-resolved dynamic-power attacks without inventing base power."""
+	if getattr(move, "category", "Status") == "Status":
+		return False
+	if getattr(move, "base_power", 0) > 0:
+		return True
+	semantics = _safe_semantic(mechanics, "moves", str(getattr(move, "id", "")))
+	return semantics.get("weight_based_power") is True or semantics.get("weight_ratio_power") is True
+
+
 def _type_pressure_tags(tags: set[OpponentTag], move_type: str) -> None:
 	mapping = {
 		"fighting": OpponentTag.FIGHTING_PRESSURE,
 		"fire": OpponentTag.FIRE_PRESSURE,
 		"rock": OpponentTag.ROCK_PRESSURE,
+		"steel": OpponentTag.STEEL_PRESSURE,
 		"ground": OpponentTag.GROUND_PRESSURE,
 		"water": OpponentTag.WATER_PRESSURE,
 		"electric": OpponentTag.ELECTRIC_PRESSURE,
@@ -928,7 +931,7 @@ def _own_offensive_answer(
 			move = mechanics.move(move_knowledge.id)
 		except KeyError:
 			continue
-		if move.base_power <= 0:
+		if not _is_damaging_move(move, mechanics):
 			continue
 		multipliers = []
 		for types in profile.possible_type_sets:
@@ -956,7 +959,7 @@ def _own_defensive_answer(
 	for move_id in profile.moves:
 		try:
 			move = mechanics.move(move_id)
-			if move.base_power > 0:
+			if _is_damaging_move(move, mechanics):
 				damaging.append(move)
 		except KeyError:
 			continue
@@ -1044,7 +1047,9 @@ def _lead_score_against(
 	if OpponentTag.WEATHER_SETTER in opp_tags and "ninetalesalola" in lead_species:
 		score -= weights["LEAD_NINETALES_WEATHER_CONFLICT_PENALTY"]
 	if "aggron" in lead_species and (
-		OpponentTag.FIGHTING_PRESSURE in opp_tags or OpponentTag.GROUND_PRESSURE in opp_tags
+		OpponentTag.FIGHTING_PRESSURE in opp_tags or
+		OpponentTag.GROUND_PRESSURE in opp_tags or
+		OpponentTag.WATER_PRESSURE in opp_tags
 	):
 		score += weights["LEAD_AGGRON_MEGA_SAFETY"]
 	if "glaceon" in lead_species and any(_dangerous_for_glaceon(profile) for profile in opponents):
@@ -1122,7 +1127,7 @@ def _move_robustly_super_effective(
 ) -> bool:
 	try:
 		move = mechanics.move(move_id)
-		if move.base_power <= 0:
+		if not _is_damaging_move(move, mechanics):
 			return False
 		return min(mechanics.move_multiplier(move, types) for types in profile.possible_type_sets) > 1.0
 	except (KeyError, ValueError, UnresolvedMechanicError):
@@ -1147,7 +1152,7 @@ def _body_press_quality(profiles: Iterable[OpponentPokemonProfile], mechanics: M
 def _own_is_attacker(pokemon: OwnPokemonKnowledge, mechanics: MechanicsSnapshot) -> bool:
 	for known_move in pokemon.moves:
 		try:
-			if mechanics.move(known_move.id).base_power > 0:
+			if _is_damaging_move(mechanics.move(known_move.id), mechanics):
 				return True
 		except KeyError:
 			pass
@@ -1162,7 +1167,7 @@ def _opponent_has_super_effective_pressure(
 	for move_id in profile.moves:
 		try:
 			move = mechanics.move(move_id)
-			if move.base_power > 0 and mechanics.move_multiplier(move, pokemon.types) > 1.0:
+			if _is_damaging_move(move, mechanics) and mechanics.move_multiplier(move, pokemon.types) > 1.0:
 				return True
 		except (KeyError, ValueError, UnresolvedMechanicError):
 			continue
@@ -1175,12 +1180,17 @@ def _dangerous_for_glaceon(profile: OpponentPokemonProfile) -> bool:
 		OpponentTag.FIRE_PRESSURE,
 		OpponentTag.FIGHTING_PRESSURE,
 		OpponentTag.ROCK_PRESSURE,
+		OpponentTag.STEEL_PRESSURE,
 	})
 
 
 def _dangerous_for_base_aggron(profile: OpponentPokemonProfile) -> bool:
 	tags = set(profile.tags)
-	return OpponentTag.FIGHTING_PRESSURE in tags or OpponentTag.GROUND_PRESSURE in tags
+	return bool(tags & {
+		OpponentTag.FIGHTING_PRESSURE,
+		OpponentTag.GROUND_PRESSURE,
+		OpponentTag.WATER_PRESSURE,
+	})
 
 
 def _find_selected(selected: Iterable[OwnPokemonKnowledge], species_id: str) -> OwnPokemonKnowledge | None:
