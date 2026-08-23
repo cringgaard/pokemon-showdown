@@ -37,6 +37,13 @@ export interface TraceFeatureContribution {
 	contribution: number;
 }
 
+interface TraceResponseEvaluation {
+	response_id: string;
+	utility: number;
+	confidence: string;
+	feature_contributions: TraceFeatureContribution[];
+}
+
 interface TraceCandidate {
 	action: {
 		action_id: string,
@@ -46,6 +53,7 @@ interface TraceCandidate {
 	credible_bad_case_score: number | null;
 	best_case_score: number | null;
 	final_score: number | null;
+	response_evaluations: TraceResponseEvaluation[];
 	feature_contributions: TraceFeatureContribution[];
 	tactical_adjustments: { rule_id: string, adjustment: number, reason: string }[];
 }
@@ -81,6 +89,8 @@ export interface SnowDecisionSummary {
 	decision_id: number;
 	turn: number;
 	phase: string;
+	trace_level: string;
+	trace_versions: Record<string, string>;
 	selected_action_id: string | null;
 	selected_action: Record<string, unknown> | null;
 	selected_score: number | null;
@@ -93,6 +103,8 @@ export interface SnowDecisionSummary {
 	primary_plan: string | null;
 	strategy_scores: SnowDecisionTrace['strategy'];
 	major_threats: string[];
+	opponent_responses: SnowDecisionTrace['opponent_responses'];
+	selected_response_evaluations: TraceResponseEvaluation[];
 	response_count: number;
 	candidate_count: number;
 	evaluation_count: number;
@@ -185,7 +197,7 @@ export async function runDeterministicSnowV1Evaluation(options: SnowEvaluationOp
 	const format = options.format || DEFAULT_FORMAT;
 	const output = prepareOutputDirectory(options.outputDirectory);
 	const root = repositoryRoot();
-	const showdownCommit = currentCommit();
+	const showdownCommit = currentCommit(root);
 	const mechanicsPath = path.join(output, 'champions-mechanics.json');
 	const mechanics = writeChampionsMechanicsSnapshot(mechanicsPath, format, showdownCommit);
 	const snowTeamPath = path.join(root, 'tournament/fixtures/teams/champions-snow.txt');
@@ -343,6 +355,8 @@ export function summarizeDecision(
 		decision_id: trace.decision_id,
 		turn: trace.turn,
 		phase: state?.battle.phase || inferTracePhase(trace),
+		trace_level: trace.level,
+		trace_versions: { ...trace.versions },
 		selected_action_id: trace.selected_action_id,
 		selected_action: selected?.action.payload || null,
 		selected_score: selectedScore,
@@ -355,6 +369,18 @@ export function summarizeDecision(
 		primary_plan: trace.strategy?.primary_plan || null,
 		strategy_scores: trace.strategy,
 		major_threats: [...trace.major_threats],
+		opponent_responses: trace.opponent_responses.map(response => ({
+			id: response.id,
+			weight: response.weight,
+			reasons: [...response.reasons],
+			actions: [...response.actions],
+		})),
+		selected_response_evaluations: (selected?.response_evaluations || []).map(evaluation => ({
+			response_id: evaluation.response_id,
+			utility: evaluation.utility,
+			confidence: evaluation.confidence,
+			feature_contributions: evaluation.feature_contributions.map(feature => ({ ...feature })),
+		})),
 		response_count: trace.runtime.response_count,
 		candidate_count: trace.runtime.candidate_count,
 		evaluation_count: trace.runtime.evaluation_count,
@@ -646,9 +672,11 @@ function repositoryRoot() {
 	return path.resolve(__dirname, '../../..');
 }
 
-function currentCommit() {
+function currentCommit(root: string) {
 	try {
-		return execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8', timeout: 1000 }).trim();
+		return execFileSync(
+			'git', ['-C', root, 'rev-parse', 'HEAD'], { encoding: 'utf8', timeout: 1000 }
+		).trim();
 	} catch {
 		return null;
 	}
