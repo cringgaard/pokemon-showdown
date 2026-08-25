@@ -1,0 +1,59 @@
+Sneasler @ Focus Sash
+Ability: Unburden
+Level: 50
+Jolly Nature
+EVs: 2 HP / 32 Atk / 32 Spe
+- Close Combat
+- Dire Claw
+- Fake Out
+- Protect
+
+Blaziken @ Life Orb
+Ability: Speed Boost
+Level: 50
+Jolly Nature
+EVs: 2 HP / 32 Atk / 32 Spe
+- Close Combat
+- Flare Blitz
+- Coaching
+- Protect
+
+Incineroar @ Safety Goggles
+Ability: Intimidate
+Level: 50
+Careful Nature
+EVs: 32 HP / 2 Atk / 32 SpD
+- Fake Out
+- Flare Blitz
+- Knock Off
+- Parting Shot
+
+Urshifu @ Choice Band
+Ability: Unseen Fist
+Level: 50
+Adamant Nature
+EVs: 32 HP / 32 Atk / 2 Spe
+- Close Combat
+- Wicked Blow
+- Sucker Punch
+- U-turn
+
+Farigiraf @ Sitrus Berry
+Ability: Armor Tail
+Level: 50
+Calm Nature
+EVs: 32 HP / 2 Def / 32 SpD
+- Psychic
+- Dazzling Gleam
+- Trick Room
+- Helping Hand
+
+Gholdengo @ Metal Coat
+Ability: Good as Gold
+Level: 50
+Timid Nature
+EVs: 2 HP / 32 SpA / 32 Spe
+- Make It Rain
+- Shadow Ball
+- Nasty Plot
+- Protect
