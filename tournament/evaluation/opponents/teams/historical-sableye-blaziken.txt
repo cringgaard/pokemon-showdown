@@ -1,0 +1,59 @@
+Espathra @ Focus Sash
+Ability: Speed Boost
+Level: 50
+Timid Nature
+EVs: 2 HP / 32 SpA / 32 Spe
+- Lumina Crash
+- Dazzling Gleam
+- Calm Mind
+- Protect
+
+Sableye @ Light Clay
+Ability: Prankster
+Level: 50
+Calm Nature
+EVs: 32 HP / 2 Def / 32 SpD
+- Fake Out
+- Encore
+- Will-O-Wisp
+- Taunt
+
+Decidueye-Hisui @ Assault Vest
+Ability: Scrappy
+Level: 50
+Adamant Nature
+EVs: 32 HP / 32 Atk / 2 SpD
+- Triple Arrows
+- Leaf Blade
+- Sucker Punch
+- U-turn
+
+Ampharos @ Leftovers
+Ability: Static
+Level: 50
+Modest Nature
+EVs: 32 HP / 32 SpA / 2 SpD
+- Thunderbolt
+- Dragon Pulse
+- Cotton Guard
+- Protect
+
+Blaziken @ Life Orb
+Ability: Speed Boost
+Level: 50
+Jolly Nature
+EVs: 2 HP / 32 Atk / 32 Spe
+- Close Combat
+- Flare Blitz
+- Coaching
+- Protect
+
+Farigiraf @ Sitrus Berry
+Ability: Armor Tail
+Level: 50
+Calm Nature
+EVs: 32 HP / 2 Def / 32 SpD
+- Psychic
+- Dazzling Gleam
+- Trick Room
+- Helping Hand
