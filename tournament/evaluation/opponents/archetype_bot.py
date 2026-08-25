@@ -15,6 +15,8 @@ from typing import Any, Mapping
 _ROOT = Path(__file__).resolve().parent
 _POLICIES = json.loads((_ROOT / "policies.json").read_text(encoding="utf-8"))
 _POLICY: Mapping[str, Any] | None = None
+_FIELD_SETUP_MOVES = {"trickroom": "trickroom", "gravity": "gravity"}
+_SIDE_SETUP_MOVES = {"tailwind": "tailwind", "auroraveil": "auroraveil", "reflect": "reflect", "lightscreen": "lightscreen"}
 
 
 def _id(value: object) -> str:
@@ -52,6 +54,25 @@ def _health_fraction(pokemon: Mapping[str, Any] | None) -> float:
     if isinstance(current, (int, float)) and isinstance(maximum, (int, float)) and maximum > 0:
         return max(0.0, min(1.0, float(current) / float(maximum)))
     return 1.0
+
+
+def _condition_active(conditions: object, condition_id: str) -> bool:
+    if not isinstance(conditions, Mapping):
+        return False
+    condition = conditions.get(condition_id)
+    if isinstance(condition, Mapping):
+        return condition.get("active") is True
+    return bool(condition)
+
+
+def _setup_already_active(state: Mapping[str, Any], move_id: str) -> bool:
+    if move_id in _FIELD_SETUP_MOVES:
+        conditions = state.get("field", {}).get("conditions", {})
+        return _condition_active(conditions, _FIELD_SETUP_MOVES[move_id])
+    if move_id in _SIDE_SETUP_MOVES:
+        conditions = state.get("self", {}).get("side_conditions", {})
+        return _condition_active(conditions, _SIDE_SETUP_MOVES[move_id])
+    return False
 
 
 def _team_maps(state: Mapping[str, Any]):
@@ -102,7 +123,8 @@ def _score_move(
 ) -> float:
     move_id = _id(action.get("move", ""))
     move = _move_for_slot(state, position, move_id)
-    score = float(policy.get("move_weights", {}).get(move_id, 0.0))
+    move_weight = float(policy.get("move_weights", {}).get(move_id, 0.0))
+    score = -abs(move_weight) if move_weight and _setup_already_active(state, move_id) else move_weight
     if move:
         base_power = float(move.get("base_power", 0) or 0)
         category = move.get("category")
