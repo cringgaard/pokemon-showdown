@@ -38,7 +38,7 @@ def rain_state():
     return {
         "self": {"team": team, "active": {"left": "team_2", "right": "team_1"}},
         "opponent": {"team": [], "active": {}},
-        "field": {"weather": "snow"},
+        "field": {"weather": "snow", "conditions": {}},
         "request": {
             "kind": "turn",
             "slots": {
@@ -61,9 +61,13 @@ def trick_room_state():
     ]
     team[0]["stats"]["spa"] = 60
     return {
-        "self": {"team": team, "active": {"left": "team_0", "right": "team_1"}},
+        "self": {
+            "team": team,
+            "active": {"left": "team_0", "right": "team_1"},
+            "side_conditions": {},
+        },
         "opponent": {"team": [], "active": {}},
-        "field": {"weather": None},
+        "field": {"weather": None, "conditions": {}},
         "request": {
             "kind": "turn",
             "slots": {
@@ -92,7 +96,11 @@ def fighting_focus_state():
         {"id": "opponent_1", "species": "Glaceon"},
     ]
     return {
-        "self": {"team": team, "active": {"left": "team_0", "right": "team_1"}},
+        "self": {
+            "team": team,
+            "active": {"left": "team_0", "right": "team_1"},
+            "side_conditions": {},
+        },
         "opponent": {
             "team": opponent,
             "active": {
@@ -100,7 +108,7 @@ def fighting_focus_state():
                 "right": opponent_active("right", "opponent_1", "Glaceon"),
             },
         },
-        "field": {"weather": None},
+        "field": {"weather": None, "conditions": {}},
         "request": {
             "kind": "turn",
             "slots": {
@@ -118,9 +126,9 @@ def fighting_focus_state():
 def spread_scoring_state():
     own = pokemon("team_0", "Gholdengo")
     return own, {
-        "self": {"team": [own], "active": {"left": "team_0"}},
+        "self": {"team": [own], "active": {"left": "team_0"}, "side_conditions": {}},
         "opponent": {"team": [], "active": {}},
-        "field": {"weather": None},
+        "field": {"weather": None, "conditions": {}},
         "request": {
             "kind": "turn",
             "slots": {"left": {"moves": [
@@ -139,6 +147,12 @@ assert rain["actions"]["left"] == {"type": "switch", "pokemon": "team_0"}, rain
 bot._POLICY = None
 trick_room = bot.choose_action(trick_room_state())
 assert trick_room["actions"]["left"]["move"] == "trickroom", trick_room
+
+active_trick_room = trick_room_state()
+active_trick_room["field"]["conditions"] = {"trickroom": {"active": True, "started_turn": 1}}
+bot._POLICY = None
+trick_room_progress = bot.choose_action(active_trick_room)
+assert trick_room_progress["actions"]["left"]["move"] == "psychic", trick_room_progress
 
 bot._POLICY = None
 fighting = bot.choose_action(fighting_focus_state())
