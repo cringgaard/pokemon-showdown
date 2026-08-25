@@ -78,13 +78,17 @@ def _opponent_species_at_target(state: Mapping[str, Any], target: str) -> str | 
     if not target.startswith("opponent_"):
         return None
     position = target.removeprefix("opponent_")
-    pokemon_id = state.get("opponent", {}).get("active", {}).get(position)
-    if not pokemon_id:
+    opponent = state.get("opponent", {})
+    active = opponent.get("active", {}).get(position)
+    if not isinstance(active, Mapping):
         return None
-    for pokemon in state.get("opponent", {}).get("team", []):
-        if pokemon.get("id") == pokemon_id:
-            return _id(pokemon.get("species", ""))
-    return None
+    team_id = active.get("team_id")
+    if team_id:
+        for pokemon in opponent.get("team", []):
+            if pokemon.get("id") == team_id:
+                return _id(pokemon.get("species", ""))
+    apparent = active.get("apparent_species")
+    return _id(apparent) if apparent else None
 
 
 def _move_for_slot(state: Mapping[str, Any], position: str, move_id: str):
@@ -110,8 +114,9 @@ def _score_move(
             if isinstance(value, (int, float)):
                 attacking_stat = float(value)
         score += base_power * attacking_stat / 100.0
-        target_type = _id(move.get("target", ""))
-        if target_type in {"alladjacentfoes", "alladjacent", "all"}:
+        # Canonical legal actions omit target for non-selectable spread attacks,
+        # while ordinary single-target attacks carry opponent_left/right.
+        if base_power > 0 and category != "Status" and not action.get("target"):
             score += float(policy.get("spread_move_bonus", 0.0))
     target_species = _opponent_species_at_target(state, str(action.get("target", "")))
     if target_species:
