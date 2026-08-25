@@ -1,0 +1,59 @@
+Farigiraf @ Sitrus Berry
+Ability: Armor Tail
+Level: 50
+Calm Nature
+EVs: 32 HP / 2 Def / 32 SpD
+- Trick Room
+- Psychic
+- Dazzling Gleam
+- Helping Hand
+
+Armarouge @ Life Orb
+Ability: Flash Fire
+Level: 50
+Quiet Nature
+EVs: 32 HP / 32 SpA / 2 SpD
+- Expanding Force
+- Armor Cannon
+- Wide Guard
+- Protect
+
+Ursaluna @ Flame Orb
+Ability: Guts
+Level: 50
+Brave Nature
+EVs: 32 HP / 32 Atk / 2 SpD
+- Headlong Rush
+- Facade
+- Earthquake
+- Protect
+
+Sinistcha @ Rocky Helmet
+Ability: Hospitality
+Level: 50
+Calm Nature
+EVs: 32 HP / 2 Def / 32 SpD
+- Matcha Gotcha
+- Rage Powder
+- Trick Room
+- Protect
+
+Incineroar @ Safety Goggles
+Ability: Intimidate
+Level: 50
+Careful Nature
+EVs: 32 HP / 2 Atk / 32 SpD
+- Fake Out
+- Flare Blitz
+- Knock Off
+- Parting Shot
+
+Kingambit @ Black Glasses
+Ability: Defiant
+Level: 50
+Adamant Nature
+EVs: 32 HP / 32 Atk / 2 SpD
+- Kowtow Cleave
+- Sucker Punch
+- Iron Head
+- Protect
