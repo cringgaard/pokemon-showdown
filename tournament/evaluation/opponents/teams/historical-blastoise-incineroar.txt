@@ -1,0 +1,59 @@
+Blastoise @ Blastoisinite
+Ability: Torrent
+Level: 50
+Modest Nature
+EVs: 32 HP / 32 SpA / 2 SpD
+- Water Spout
+- Ice Beam
+- Aura Sphere
+- Protect
+
+Delphox @ Life Orb
+Ability: Blaze
+Level: 50
+Timid Nature
+EVs: 2 HP / 32 SpA / 32 Spe
+- Heat Wave
+- Psychic
+- Dazzling Gleam
+- Protect
+
+Sneasler @ Focus Sash
+Ability: Unburden
+Level: 50
+Jolly Nature
+EVs: 2 HP / 32 Atk / 32 Spe
+- Close Combat
+- Dire Claw
+- Fake Out
+- Protect
+
+Sinistcha @ Sitrus Berry
+Ability: Hospitality
+Level: 50
+Calm Nature
+EVs: 32 HP / 2 Def / 32 SpD
+- Matcha Gotcha
+- Rage Powder
+- Trick Room
+- Protect
+
+Incineroar @ Safety Goggles
+Ability: Intimidate
+Level: 50
+Careful Nature
+EVs: 32 HP / 2 Atk / 32 SpD
+- Fake Out
+- Flare Blitz
+- Knock Off
+- Parting Shot
+
+Kingambit @ Black Glasses
+Ability: Defiant
+Level: 50
+Adamant Nature
+EVs: 32 HP / 32 Atk / 2 SpD
+- Kowtow Cleave
+- Sucker Punch
+- Iron Head
+- Protect
