@@ -5,6 +5,7 @@ import {
 	runDeterministicSnowV1Evaluation,
 	type SnowEvaluationProfile,
 	type SnowEvaluationReport,
+	type SnowMatchSummary,
 } from './deterministic-snow-v1';
 
 export const OPPONENT_BENCHMARK_SCHEMA_VERSION = 1;
@@ -57,6 +58,11 @@ interface GroupSummary {
 	weighted_match_mass: number;
 	weighted_win_mass: number;
 	weighted_win_rate: number | null;
+}
+
+interface GroupAccumulator {
+	profileIDs: Set<string>;
+	matches: SnowMatchSummary[];
 }
 
 export interface OpponentBenchmarkReport {
@@ -204,12 +210,12 @@ function aggregateGroups(
 	profiles: Map<string, OpponentBenchmarkProfile>,
 	key: (profile: OpponentBenchmarkProfile) => string
 ): Record<string, GroupSummary> {
-	const groups = new Map<string, { profileIDs: Set<string>, matches: typeof report.matches }>();
+	const groups = new Map<string, GroupAccumulator>();
 	for (const match of report.matches) {
 		const profile = profiles.get(match.profile_id);
 		if (!profile) throw new Error(`Evaluation returned unknown benchmark profile ${match.profile_id}.`);
 		const groupID = key(profile);
-		const group = groups.get(groupID) || { profileIDs: new Set<string>(), matches: [] };
+		const group: GroupAccumulator = groups.get(groupID) || { profileIDs: new Set<string>(), matches: [] };
 		group.profileIDs.add(profile.id);
 		group.matches.push(match);
 		groups.set(groupID, group);
