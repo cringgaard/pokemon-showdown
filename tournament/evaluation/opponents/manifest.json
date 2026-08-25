@@ -1,0 +1,115 @@
+{
+  "schema_version": 1,
+  "profiles": [
+    {
+      "id": "historical-rain-archaludon",
+      "name": "Historical Rain Archaludon",
+      "suite": "historical",
+      "archetype": "rain_offense",
+      "weight": 1.0,
+      "team": "teams/historical-rain-archaludon.txt",
+      "tags": ["WEATHER", "RAIN", "SPREAD", "FIGHTING_PRESSURE"],
+      "provenance": "Real ladder six-species roster; moves/items/stat points reconstructed for benchmark use."
+    },
+    {
+      "id": "historical-blastoise-incineroar",
+      "name": "Historical Blastoise Incineroar",
+      "suite": "historical",
+      "archetype": "physical_pressure_balance",
+      "weight": 1.0,
+      "team": "teams/historical-blastoise-incineroar.txt",
+      "tags": ["FAKE_OUT", "FIGHTING_PRESSURE", "REDIRECTION", "MEGA"],
+      "provenance": "Real ladder six-species roster; moves/items/stat points reconstructed for benchmark use."
+    },
+    {
+      "id": "historical-gengar-balance",
+      "name": "Historical Mega Gengar Balance",
+      "suite": "historical",
+      "archetype": "ghost_balance",
+      "weight": 1.0,
+      "team": "teams/historical-gengar-balance.txt",
+      "tags": ["GHOST", "REDIRECTION", "SPREAD", "MEGA"],
+      "provenance": "Real ladder six-species roster; moves/items/stat points reconstructed for benchmark use."
+    },
+    {
+      "id": "historical-sableye-blaziken",
+      "name": "Historical Sableye Blaziken",
+      "suite": "historical",
+      "archetype": "control_setup",
+      "weight": 1.0,
+      "team": "teams/historical-sableye-blaziken.txt",
+      "tags": ["FAKE_OUT", "CONTROL", "SETUP", "TRICK_ROOM"],
+      "provenance": "Real ladder six-species roster; moves/items/stat points reconstructed for benchmark use."
+    },
+    {
+      "id": "representative-trick-room",
+      "name": "Representative Trick Room",
+      "suite": "representative",
+      "archetype": "trick_room",
+      "weight": 1.0,
+      "team": "teams/representative-trick-room.txt",
+      "tags": ["TRICK_ROOM", "REDIRECTION", "FAKE_OUT", "SLOW_OFFENSE"],
+      "provenance": "Constructed benchmark team representing common Champions Trick Room pressure."
+    },
+    {
+      "id": "representative-spread-offense",
+      "name": "Representative Spread Offense",
+      "suite": "representative",
+      "archetype": "spread_offense",
+      "weight": 1.0,
+      "team": "teams/representative-spread-offense.txt",
+      "tags": ["TAILWIND", "SPREAD", "FAKE_OUT", "BALANCE"],
+      "provenance": "Constructed benchmark team representing fast spread-damage balance."
+    },
+    {
+      "id": "representative-control-balance",
+      "name": "Representative Control Balance",
+      "suite": "representative",
+      "archetype": "control_balance",
+      "weight": 1.0,
+      "team": "teams/representative-control-balance.txt",
+      "tags": ["FAKE_OUT", "CONTROL", "PIVOT", "SPEED_CONTROL"],
+      "provenance": "Constructed benchmark team representing Fake Out, pivoting, speed control and flexible board states."
+    },
+    {
+      "id": "stress-fighting-pressure",
+      "name": "Stress Fighting Pressure",
+      "suite": "stress",
+      "archetype": "fighting_pressure",
+      "weight": 1.0,
+      "team": "teams/stress-fighting-pressure.txt",
+      "tags": ["FIGHTING_PRESSURE", "FAKE_OUT", "AGGRON_PRESSURE", "FOCUS_FIRE"],
+      "provenance": "Constructed adversarial stress team for Aggron survival, redirection and Mega timing."
+    },
+    {
+      "id": "stress-ghost-pivots",
+      "name": "Stress Ghost Pivots",
+      "suite": "stress",
+      "archetype": "ghost_pivots",
+      "weight": 1.0,
+      "team": "teams/stress-ghost-pivots.txt",
+      "tags": ["GHOST", "PIVOT", "BODY_PRESS_IMMUNITY", "REDIRECTION"],
+      "provenance": "Constructed adversarial stress team for Body Press immunity awareness and pivot handling."
+    },
+    {
+      "id": "stress-no-guard-gravity",
+      "name": "Stress No Guard Gravity",
+      "suite": "stress",
+      "archetype": "no_guard_gravity",
+      "weight": 1.0,
+      "team": "teams/stress-no-guard-gravity.txt",
+      "tags": ["NO_GUARD", "GRAVITY", "EVASION_PUNISH", "SPREAD"],
+      "provenance": "Constructed adversarial stress team for accuracy/evasion denial."
+    },
+    {
+      "id": "stress-stat-drop-punish",
+      "name": "Stress Stat Drop Punish",
+      "suite": "stress",
+      "archetype": "stat_drop_punish",
+      "weight": 1.0,
+      "team": "teams/stress-stat-drop-punish.txt",
+      "tags": ["DEFIANT", "COMPETITIVE", "CONTRARY", "STAT_DROP_PUNISH"],
+      "provenance": "Constructed adversarial stress team for Mud-Slap/stat-drop punishment."
+    }
+  ]
+}
