@@ -101,7 +101,7 @@
       "id": "stress-fighting-pressure",
       "roster": ["Sneasler", "Blaziken", "Incineroar", "Urshifu", "Farigiraf", "Gholdengo"],
       "preview_species_order": ["Sneasler", "Incineroar", "Blaziken", "Urshifu"],
-      "move_weights": {"fakeout": 60, "closecombat": 55, "coaching": 45, "surgingstrikes": 45, "partingshot": 25},
+      "move_weights": {"fakeout": 60, "closecombat": 55, "coaching": 45, "wickedblow": 45, "partingshot": 25},
       "target_species_weights": {"aggron": 60, "glaceon": 30},
       "switch_species_weights": {"incineroar": 18},
       "spread_move_bonus": 12,
