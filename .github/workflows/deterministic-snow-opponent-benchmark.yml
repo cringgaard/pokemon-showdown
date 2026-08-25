@@ -1,0 +1,84 @@
+name: Deterministic Snow Opponent Benchmark
+
+on:
+  workflow_dispatch:
+    inputs:
+      games_per_side:
+        description: Paired simulator seeds per selected profile and side
+        required: true
+        default: '2'
+      suites:
+        description: Comma-separated suites: historical,representative,stress
+        required: true
+        default: 'historical,representative,stress'
+      profiles:
+        description: Optional comma-separated profile IDs; leave empty for all selected suites
+        required: false
+        default: ''
+      analysis_decision_timeout_ms:
+        description: FULL-trace analytical deadline; tournament budget remains 5000 ms
+        required: true
+        default: '8000'
+
+permissions:
+  contents: read
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 18.x
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build repository
+        run: npm run build
+
+      - name: Run opponent benchmark
+        env:
+          GAMES_PER_SIDE: ${{ inputs.games_per_side }}
+          SUITES: ${{ inputs.suites }}
+          PROFILES: ${{ inputs.profiles }}
+          ANALYSIS_TIMEOUT: ${{ inputs.analysis_decision_timeout_ms }}
+        run: |
+          args=(
+            --output snow-opponent-benchmark
+            --games-per-side "$GAMES_PER_SIDE"
+            --suites "$SUITES"
+            --decision-timeout-ms "$ANALYSIS_TIMEOUT"
+            --match-timeout-ms 120000
+          )
+          if [[ -n "$PROFILES" ]]; then
+            args+=(--profiles "$PROFILES")
+          fi
+          node dist/tournament/evaluation/opponent-benchmark-cli.js "${args[@]}"
+
+      - name: Publish benchmark summary
+        if: always() && hashFiles('snow-opponent-benchmark/benchmark-summary.json') != ''
+        run: |
+          {
+            echo '## Deterministic Snow opponent benchmark'
+            echo
+            echo '```json'
+            cat snow-opponent-benchmark/benchmark-summary.json
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload benchmark artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: deterministic-snow-opponent-benchmark-${{ github.sha }}
+          path: snow-opponent-benchmark/
+          if-no-files-found: warn
+          retention-days: 30

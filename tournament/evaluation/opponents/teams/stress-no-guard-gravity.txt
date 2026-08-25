@@ -1,0 +1,59 @@
+Machamp @ Life Orb
+Ability: No Guard
+Level: 50
+Adamant Nature
+EVs: 32 HP / 32 Atk / 2 SpD
+- Dynamic Punch
+- Rock Slide
+- Heavy Slam
+- Protect
+
+Clefable @ Sitrus Berry
+Ability: Magic Guard
+Level: 50
+Calm Nature
+EVs: 32 HP / 2 Def / 32 SpD
+- Gravity
+- Follow Me
+- Moonblast
+- Protect
+
+Gengar @ Focus Sash
+Ability: Cursed Body
+Level: 50
+Timid Nature
+EVs: 2 HP / 32 SpA / 32 Spe
+- Shadow Ball
+- Sludge Bomb
+- Icy Wind
+- Protect
+
+Dragonite @ Lum Berry
+Ability: Inner Focus
+Level: 50
+Adamant Nature
+EVs: 32 HP / 32 Atk / 2 Spe
+- Extreme Speed
+- Dragon Claw
+- Stomping Tantrum
+- Protect
+
+Incineroar @ Safety Goggles
+Ability: Intimidate
+Level: 50
+Careful Nature
+EVs: 32 HP / 2 Atk / 32 SpD
+- Fake Out
+- Flare Blitz
+- Knock Off
+- Parting Shot
+
+Milotic @ Leftovers
+Ability: Competitive
+Level: 50
+Calm Nature
+EVs: 32 HP / 2 Def / 32 SpD
+- Hydro Pump
+- Ice Beam
+- Icy Wind
+- Protect

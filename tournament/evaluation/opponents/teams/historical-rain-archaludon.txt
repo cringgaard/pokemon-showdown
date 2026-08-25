@@ -1,0 +1,59 @@
+Pelipper @ Damp Rock
+Ability: Drizzle
+Level: 50
+Timid Nature
+EVs: 2 HP / 32 SpA / 32 Spe
+- Tailwind
+- Hurricane
+- Weather Ball
+- Protect
+
+Archaludon @ Assault Vest
+Ability: Stamina
+Level: 50
+Modest Nature
+EVs: 32 HP / 32 SpA / 2 SpD
+- Electro Shot
+- Draco Meteor
+- Flash Cannon
+- Body Press
+
+Sneasler @ Focus Sash
+Ability: Unburden
+Level: 50
+Jolly Nature
+EVs: 2 HP / 32 Atk / 32 Spe
+- Close Combat
+- Dire Claw
+- Fake Out
+- Protect
+
+Basculegion @ Choice Band
+Ability: Swift Swim
+Level: 50
+Adamant Nature
+EVs: 32 HP / 32 Atk / 2 Spe
+- Wave Crash
+- Last Respects
+- Aqua Jet
+- Psychic Fangs
+
+Dragonite @ Lum Berry
+Ability: Inner Focus
+Level: 50
+Adamant Nature
+EVs: 32 HP / 32 Atk / 2 Spe
+- Extreme Speed
+- Dragon Claw
+- Stomping Tantrum
+- Protect
+
+Meganium @ Leftovers
+Ability: Overgrow
+Level: 50
+Calm Nature
+EVs: 32 HP / 2 Def / 32 SpD
+- Giga Drain
+- Helping Hand
+- Leech Seed
+- Protect

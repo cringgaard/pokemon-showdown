@@ -1,0 +1,59 @@
+Incineroar @ Safety Goggles
+Ability: Intimidate
+Level: 50
+Careful Nature
+EVs: 32 HP / 2 Atk / 32 SpD
+- Fake Out
+- Flare Blitz
+- Knock Off
+- Parting Shot
+
+Farigiraf @ Sitrus Berry
+Ability: Armor Tail
+Level: 50
+Calm Nature
+EVs: 32 HP / 2 Def / 32 SpD
+- Trick Room
+- Psychic
+- Dazzling Gleam
+- Helping Hand
+
+Sableye @ Focus Sash
+Ability: Prankster
+Level: 50
+Calm Nature
+EVs: 32 HP / 2 Def / 32 SpD
+- Fake Out
+- Encore
+- Will-O-Wisp
+- Taunt
+
+Gholdengo @ Metal Coat
+Ability: Good as Gold
+Level: 50
+Timid Nature
+EVs: 2 HP / 32 SpA / 32 Spe
+- Make It Rain
+- Shadow Ball
+- Nasty Plot
+- Protect
+
+Dragonite @ Lum Berry
+Ability: Inner Focus
+Level: 50
+Adamant Nature
+EVs: 32 HP / 32 Atk / 2 Spe
+- Extreme Speed
+- Dragon Claw
+- Stomping Tantrum
+- Protect
+
+Milotic @ Leftovers
+Ability: Competitive
+Level: 50
+Calm Nature
+EVs: 32 HP / 2 Def / 32 SpD
+- Muddy Water
+- Ice Beam
+- Icy Wind
+- Protect

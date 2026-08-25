@@ -1,0 +1,59 @@
+Gengar @ Gengarite
+Ability: Cursed Body
+Level: 50
+Timid Nature
+EVs: 2 HP / 32 SpA / 32 Spe
+- Shadow Ball
+- Sludge Bomb
+- Icy Wind
+- Protect
+
+Snorlax @ Leftovers
+Ability: Thick Fat
+Level: 50
+Careful Nature
+EVs: 32 HP / 32 Atk / 2 SpD
+- Body Slam
+- High Horsepower
+- Curse
+- Protect
+
+Gholdengo @ Metal Coat
+Ability: Good as Gold
+Level: 50
+Modest Nature
+EVs: 32 HP / 32 SpA / 2 Spe
+- Make It Rain
+- Shadow Ball
+- Nasty Plot
+- Protect
+
+Annihilape @ Sitrus Berry
+Ability: Defiant
+Level: 50
+Adamant Nature
+EVs: 32 HP / 32 Atk / 2 SpD
+- Rage Fist
+- Drain Punch
+- Bulk Up
+- Protect
+
+Maushold @ Safety Goggles
+Ability: Friend Guard
+Level: 50
+Calm Nature
+EVs: 32 HP / 2 Def / 32 SpD
+- Follow Me
+- Super Fang
+- Encore
+- Protect
+
+Sinistcha @ Rocky Helmet
+Ability: Hospitality
+Level: 50
+Calm Nature
+EVs: 32 HP / 2 Def / 32 SpD
+- Matcha Gotcha
+- Rage Powder
+- Trick Room
+- Protect
