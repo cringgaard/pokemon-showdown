@@ -34,6 +34,25 @@ The output directory must be empty. The current default profiles use the snow te
 - `greedy-mirror` chooses the highest immediate public damage score.
 - `random-mirror` samples from the complete legal-action list.
 
+## Representative opponent benchmark
+
+Baseline mirrors are useful runtime and policy sanity checks, but they are not a representative Champions tuning distribution. The next evaluation layer is documented in [`opponents/README.md`](./opponents/README.md).
+
+It adds separate **historical**, **representative**, and **stress** suites, one reusable configured opponent bot, explicit provenance for reconstructed ladder teams, and `benchmark-summary.json` with raw/weighted performance by suite and archetype.
+
+Run it after building with:
+
+```sh
+node dist/tournament/evaluation/opponent-benchmark-cli.js \
+  --output ./snow-opponent-benchmark \
+  --games-per-side 2 \
+  --suites historical,representative,stress
+```
+
+The benchmark uses an 8000 ms analytical deadline by default because FULL trace capture is intentionally expensive, but it separately reports decisions whose measured latency exceeds the real 5000 ms tournament budget. This does not change tournament runtime rules.
+
+Do not collapse stress-suite performance into the representative tuning objective. Stress teams exist to expose specific strategic failures; historical/representative weighting should eventually come from observed Champions matchup frequencies.
+
 ## Pairing semantics
 
 For each profile and seed the schedule runs the snow bot once as p1 and once as p2 with the same Showdown battle seed. This balances side-dependent simulator effects.
@@ -46,7 +65,9 @@ Participant worker RNG is intentionally seeded by MatchRunner with both battle s
 
 The post-merge default is 6 seeds per side for both baseline profiles: 24 matches total. Normal pull-request CI still runs only the two-match evaluation smoke test.
 
-Full traces can be large. The GitHub Actions workflow uploads the complete evaluation directory as an artifact and writes `summary.json` into the workflow summary for quick inspection.
+The representative opponent benchmark has its own manual workflow so larger historical/representative/stress runs are explicit experiments rather than an automatic cost on every policy change.
+
+Full traces can be large. The GitHub Actions workflows upload the complete evaluation directory as an artifact and write their summary JSON into the workflow summary for quick inspection.
 
 ## Interpreting the first experiments
 
